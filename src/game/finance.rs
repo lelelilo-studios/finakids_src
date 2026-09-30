@@ -157,6 +157,15 @@ pub struct Finance {
 }
 
 impl Finance {
+    /// Lunches and bus fare paid every week.
+    pub const FIXED_WEEKLY: i64 = 6_000;
+
+    /// Money left each week after fixed expenses and current installments.
+    pub fn weekly_free(&self) -> i64 {
+        let inst: i64 = self.debts.iter().filter(|d| d.payments_left > 0).map(|d| d.installment).sum();
+        self.allowance - Self::FIXED_WEEKLY - inst
+    }
+
     pub fn new() -> Finance {
         Finance {
             wallet: 2_500,
@@ -388,7 +397,7 @@ impl Finance {
         // fixed weekly expenses
         let lunch = 4_000;
         let bus = 2_000;
-        let fixed = lunch + bus;
+        let fixed = Self::FIXED_WEEKLY;
         self.wallet -= fixed;
         self.log("Colaciones y transporte", -fixed, Account::Wallet);
         rep.lines.push(("Colaciones de la semana".into(), -lunch));
@@ -416,11 +425,23 @@ impl Finance {
         }
         // debts
         let mut paid_total = 0;
-        for d in &mut self.debts {
+        let mut debts = std::mem::take(&mut self.debts);
+        for d in &mut debts {
             if d.payments_left == 0 && d.overdue == 0 {
                 continue;
             }
             let due = if d.payments_left > 0 { d.installment } else { 0 } + d.overdue;
+            // if the wallet is short, the bank takes the rest from savings
+            if self.wallet < due && self.wallet + self.savings >= due {
+                let from_sav = due - self.wallet.max(0);
+                self.savings -= from_sav;
+                self.wallet += from_sav;
+                rep.notes.push(format!(
+                    "Tu billetera no alcanzaba para la cuota de {}: se usaron {} de tu ahorro.",
+                    d.name,
+                    money(from_sav)
+                ));
+            }
             if self.wallet >= due {
                 self.wallet -= due;
                 d.paid += due;
@@ -449,6 +470,7 @@ impl Finance {
                 ));
             }
         }
+        self.debts = debts;
         if paid_total > 0 {
             self.log("Pago de cuotas", -paid_total, Account::Credit);
         }

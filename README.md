@@ -36,12 +36,21 @@ finakids --shot out.png --size 1280x720 --frames 120 [--scene bedroom|home|plaza
          [--autoplay] [--fresh] [--no-ui] [--icon]
 ```
 
+Prueba automática de la historia completa (juega las 8 semanas solo y registra cada decisión y el estado financiero):
+
+```bash
+finakids --shot fin.png --frames 100000 --bot-policy first|last|wise|random:SEMILLA --save-dir /tmp/finakids-bot
+```
+
 En la web, las mismas opciones funcionan como parámetros de URL (`?hour=19&scene=plaza`).
 
 ## Publicación
 
-- `ci.yml`: en cada push a `main` compila la versión web y la publica en el repo público (conserva las descargas).
-- `release.yml`: con un tag `v*` o manualmente, compila Windows, macOS (universal), Linux, Android (APK arm64), iOS (IPA sin firmar + simulador) y Web, y publica todo en el repo público (GitHub Pages).
-- Requiere el secreto `SITE_DEPLOY_KEY` (clave SSH de despliegue con escritura en `lelelilo-studios/Finakids`).
+Las GitHub Actions de los repos privados de la cuenta no arrancan (límite de facturación), así que la compilación vive en el repo público:
+
+- `lelelilo-studios/Finakids` tiene `.github/workflows/build.yml` (copia canónica en `packaging/public-ci/build.yml`). Clona este código con una clave de despliegue de solo lectura (`SRC_DEPLOY_KEY`), compila Web, Windows, macOS (universal), Linux, Android (APK arm64) e iOS (IPA sin firmar + simulador) y publica solo los binarios en GitHub Pages.
+- Para publicar una versión nueva: `gh workflow run build.yml -R lelelilo-studios/Finakids -f ref=main`.
+- El APK se firma con un keystore estable guardado en los secretos `ANDROID_KEYSTORE_B64` / `ANDROID_KEYSTORE_PASSWORD`.
+- `ci.yml` y `release.yml` de este repo quedan solo con ejecución manual, por si se reactivan las Actions privadas.
 
 Fuente tipográfica: Inter (SIL Open Font License, ver `assets/fonts/Inter-LICENSE.txt`).

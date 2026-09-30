@@ -9,6 +9,12 @@ pub const TAU: f32 = std::f32::consts::TAU;
 #[derive(Clone, Debug)]
 pub struct Rng(u64);
 
+impl Default for Rng {
+    fn default() -> Self {
+        Rng::new(1)
+    }
+}
+
 impl Rng {
     pub fn new(seed: u64) -> Self {
         Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1)

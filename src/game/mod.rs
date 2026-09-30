@@ -1,5 +1,6 @@
 //! Game state, simulation loop, scripted scenes and rendering glue.
 
+pub mod bot;
 pub mod business;
 pub mod camera;
 pub mod config;
@@ -488,6 +489,7 @@ pub struct Game {
     pending_input: UiInput,
     world_tap: Option<Vec2>,
     ui_hover: bool,
+    bot: Option<bot::Bot>,
 }
 
 fn make_character(gpu: &Gpu, r: &mut Renderer, id: &'static str, app: Appearance, loc: &Location, spawn: &str, q: Quality) -> Character {
@@ -575,6 +577,7 @@ impl Game {
             pending_input: UiInput::default(),
             world_tap: None,
             ui_hover: false,
+            bot: if cfg.bot { Some(bot::Bot::new(&cfg.bot_policy)) } else { None },
         };
         if g.s.cfg.autostart {
             while !g.s.build_queue.is_empty() {
@@ -713,6 +716,10 @@ impl Game {
         }
         if self.s.screen == Screen::Playing {
             self.run_director(dt);
+            if let Some(b) = &mut self.bot {
+                let acts = b.step(&mut self.s, dt);
+                self.ui_acts.extend(acts);
+            }
             self.player_control(dt, input, w, h);
         } else {
             story::update_title(&mut self.s, dt);

@@ -209,33 +209,132 @@ impl Location {
         })
     }
 
-    /// Straight-line path with a simple detour around blocking furniture.
+    /// Path around furniture using A* on a 0.2 m grid, smoothed by line-of-sight.
     pub fn path(&self, from: Vec3, to: Vec3, r: f32) -> Vec<Vec3> {
         let clear = |a: Vec3, b: Vec3| -> bool {
-            let n = ((b - a).length() / 0.1).ceil() as i32;
-            (1..=n).all(|i| !self.blocked(a.lerp(b, i as f32 / n as f32), r * 0.9))
+            let n = ((b - a).length() / 0.08).ceil().max(1.0) as i32;
+            (1..=n).all(|i| !self.blocked(a.lerp(b, i as f32 / n as f32), r * 0.92))
         };
-        if clear(from, to) || self.blocked(to, r * 0.9) {
+        if clear(from, to) {
             return vec![to];
         }
-        // try waypoints around the midpoint
-        let mid = (from + to) * 0.5;
-        let dir = (to - from).normalize_or(Vec3::Z);
-        let side = Vec3::new(-dir.z, 0.0, dir.x);
-        let mut best: Option<(f32, Vec3)> = None;
-        for s in [0.6f32, -0.6, 1.0, -1.0, 1.5, -1.5, 2.0, -2.0] {
-            let w = mid + side * s;
-            if !self.blocked(w, r) && clear(from, w) && clear(w, to) {
-                let len = (w - from).length() + (to - w).length();
-                if best.map(|b| len < b.0).unwrap_or(true) {
-                    best = Some((len, w));
+        let cell = 0.2f32;
+        let (lo, hi) = self.bounds;
+        let w = ((hi.x - lo.x) / cell).ceil() as i32 + 1;
+        let h = ((hi.y - lo.y) / cell).ceil() as i32 + 1;
+        let to_cell = |p: Vec3| -> (i32, i32) { (((p.x - lo.x) / cell).round() as i32, ((p.z - lo.y) / cell).round() as i32) };
+        let to_pos = |c: (i32, i32)| -> Vec3 { Vec3::new(lo.x + c.0 as f32 * cell, from.y, lo.y + c.1 as f32 * cell) };
+        let free = |c: (i32, i32)| -> bool { c.0 >= 0 && c.1 >= 0 && c.0 < w && c.1 < h && !self.blocked(to_pos(c), r * 0.92) };
+        // snap goal to the nearest free cell
+        let mut goal = to_cell(to);
+        if !free(goal) {
+            let mut best: Option<((i32, i32), f32)> = None;
+            for dz in -6..=6 {
+                for dx in -6..=6 {
+                    let c = (goal.0 + dx, goal.1 + dz);
+                    if free(c) {
+                        let d = (dx * dx + dz * dz) as f32;
+                        if best.map(|b| d < b.1).unwrap_or(true) {
+                            best = Some((c, d));
+                        }
+                    }
+                }
+            }
+            match best {
+                Some((c, _)) => goal = c,
+                None => return vec![to],
+            }
+        }
+        let start = to_cell(from);
+        let idx = |c: (i32, i32)| (c.1 * w + c.0) as usize;
+        let n = (w * h) as usize;
+        let mut g = vec![f32::MAX; n];
+        let mut came = vec![u32::MAX; n];
+        let mut closed = vec![false; n];
+        let mut open = std::collections::BinaryHeap::new();
+        #[derive(PartialEq)]
+        struct Node(f32, i32, i32);
+        impl Eq for Node {}
+        impl PartialOrd for Node {
+            fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> {
+                Some(self.cmp(o))
+            }
+        }
+        impl Ord for Node {
+            fn cmp(&self, o: &Self) -> std::cmp::Ordering {
+                o.0.partial_cmp(&self.0).unwrap_or(std::cmp::Ordering::Equal)
+            }
+        }
+        let hfn = |c: (i32, i32)| (((c.0 - goal.0).pow(2) + (c.1 - goal.1).pow(2)) as f32).sqrt();
+        if start.0 < 0 || start.1 < 0 || start.0 >= w || start.1 >= h {
+            return vec![to];
+        }
+        g[idx(start)] = 0.0;
+        open.push(Node(hfn(start), start.0, start.1));
+        let mut found = false;
+        let mut iters = 0;
+        while let Some(Node(_, x, z)) = open.pop() {
+            iters += 1;
+            if iters > 60_000 {
+                break;
+            }
+            let c = (x, z);
+            if closed[idx(c)] {
+                continue;
+            }
+            closed[idx(c)] = true;
+            if c == goal {
+                found = true;
+                break;
+            }
+            for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)] {
+                let nb = (x + dx, z + dz);
+                if !free(nb) && nb != goal {
+                    continue;
+                }
+                if dx != 0 && dz != 0 && (!free((x + dx, z)) || !free((x, z + dz))) {
+                    continue;
+                }
+                let cost = g[idx(c)] + if dx != 0 && dz != 0 { 1.4142 } else { 1.0 };
+                let ni = idx(nb);
+                if cost < g[ni] {
+                    g[ni] = cost;
+                    came[ni] = idx(c) as u32;
+                    open.push(Node(cost + hfn(nb), nb.0, nb.1));
                 }
             }
         }
-        match best {
-            Some((_, w)) => vec![w, to],
-            None => vec![to],
+        if !found {
+            return vec![to];
         }
+        let mut cells = vec![goal];
+        let mut cur = idx(goal);
+        while came[cur] != u32::MAX {
+            cur = came[cur] as usize;
+            let c = (cur as i32 % w, cur as i32 / w);
+            cells.push(c);
+        }
+        cells.reverse();
+        let mut pts: Vec<Vec3> = cells.iter().map(|c| to_pos(*c)).collect();
+        if let Some(l) = pts.last_mut() {
+            if free(to_cell(to)) {
+                *l = to;
+            }
+        }
+        // string pulling
+        let mut out = Vec::new();
+        let mut anchor = from;
+        let mut i = 0;
+        while i < pts.len() {
+            let mut j = pts.len() - 1;
+            while j > i && !clear(anchor, pts[j]) {
+                j -= 1;
+            }
+            out.push(pts[j]);
+            anchor = pts[j];
+            i = j + 1;
+        }
+        out
     }
 
     /// Adds this location's geometry to the frame.

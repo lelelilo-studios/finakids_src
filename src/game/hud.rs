@@ -836,8 +836,10 @@ fn shop(ui: &mut Ui, s: &State, st: &ShopState, acts: &mut Vec<UiAct>) {
     if it.credit {
         let q3 = Finance::quote(price, 3, 0.0);
         let q6 = Finance::quote(price, 6, 0.04);
-        opts.push((format!("3 cuotas sin interés de {}", money(q3)), format!("Total {}", money(q3 * 3)), Some((3, 0.0)), true));
-        opts.push((format!("6 cuotas de {}", money(q6)), format!("Total {} · interés 4% semanal", money(q6 * 6)), Some((6, 0.04)), true));
+        let free = s.fin.weekly_free();
+        let warn = |q: i64| if q > free { format!(" · ¡más que tus {} libres/sem.!", money(free.max(0))) } else { String::new() };
+        opts.push((format!("3 cuotas sin interés de {}", money(q3)), format!("Total {}{}", money(q3 * 3), warn(q3)), Some((3, 0.0)), true));
+        opts.push((format!("6 cuotas de {}", money(q6)), format!("Total {} · 4% semanal{}", money(q6 * 6), warn(q6)), Some((6, 0.04)), true));
     }
     for (i, (label, sub, credit, enabled)) in opts.iter().enumerate() {
         let br = Rect::new(d.x + 24.0, y, bw, opt_h);

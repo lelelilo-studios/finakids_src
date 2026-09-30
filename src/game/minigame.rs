@@ -123,7 +123,9 @@ impl CafeGame {
             self.failed += expired;
             self.feedback = Some(("Un cliente se cansó de esperar y se fue".into(), false, 0.0));
         }
-        if self.orders.is_empty() && self.t < self.dur - 3.0 {
+        // a short pause before the next customer reaches the counter
+        if self.orders.is_empty() && self.t < self.dur - 3.0 && self.spawn > 1.4 {
+            self.spawn = 0.0;
             self.new_order();
         }
         if self.t >= self.dur {
@@ -142,11 +144,14 @@ impl CafeGame {
         if want == have {
             let o = self.orders.remove(0);
             let frac = (o.patience / o.max_patience).clamp(0.0, 1.0);
-            let base = if self.busy { 350.0 } else { 250.0 };
-            let tip = ((base + frac * 700.0) / 50.0).round() as i64 * 50;
+            let base = if self.busy { 100.0 } else { 50.0 };
+            let tip = ((base + frac * 160.0) / 50.0).round() as i64 * 50;
             self.tips += tip;
             self.served += 1;
             self.feedback = Some((format!("¡Perfecto! {} dejó {} de propina", o.name, money(tip)), true, 0.0));
+            if self.orders.is_empty() {
+                self.spawn = 0.0;
+            }
         } else {
             self.feedback = Some(("Ese no es el pedido. Revisa la bandeja.".into(), false, 0.0));
         }
@@ -193,9 +198,10 @@ pub fn apply(s: &mut State, a: MiniAct) {
                 s.fin.journal(
                     "Primer sueldo",
                     &format!(
-                        "Trabajaste 3 horas y ganaste {} de sueldo más {} en propinas. Ahora sabes cuánto tiempo cuesta lo que compras: unos audífonos de $39.990 son casi 6 turnos.",
+                        "Trabajaste 3 horas y ganaste {} de sueldo más {} en propinas. Ahora sabes cuánto tiempo cuesta lo que compras: unos audífonos de $39.990 son unos {} turnos como este.",
                         money(wage),
-                        money(tips)
+                        money(tips),
+                        (39_990 + wage + tips - 1) / (wage + tips).max(1)
                     ),
                     Skill::Enterprise,
                     if failed <= served { 1 } else { 0 },

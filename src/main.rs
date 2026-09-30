@@ -24,13 +24,11 @@ fn main() {
                 frames = next.parse().unwrap_or(frames);
                 i += 1;
             }
-            other => {
-                if !cfg.apply_arg(other, &next) {
-                    eprintln!("argumento desconocido: {other}");
-                } else {
-                    i += 1;
-                }
-            }
+            other => match cfg.arg(other, &next) {
+                Some(true) => i += 1,
+                Some(false) => {}
+                None => eprintln!("argumento desconocido: {other}"),
+            },
         }
         i += 1;
     }

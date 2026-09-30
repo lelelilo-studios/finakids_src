@@ -20,6 +20,9 @@ pub struct GameConfig {
     pub autoplay: bool,
     /// Render the app icon instead of the game.
     pub icon: bool,
+    /// Automated play-tester.
+    pub bot: bool,
+    pub bot_policy: String,
 }
 
 impl Default for GameConfig {
@@ -36,15 +39,35 @@ impl Default for GameConfig {
             autostart: false,
             autoplay: false,
             icon: false,
+            bot: false,
+            bot_policy: "first".into(),
         }
     }
 }
 
 impl GameConfig {
-    /// Applies `--key value` style arguments. Returns true when `value` was consumed.
+    /// Applies `--key value` style arguments. Returns Some(true) when `value` was consumed,
+    /// Some(false) for flags without value and None for unknown arguments.
+    pub fn arg(&mut self, key: &str, value: &str) -> Option<bool> {
+        let known = [
+            "scene", "bot-policy", "hour", "cam", "beat", "ui-scale", "ui_scale", "save-dir", "no-ui", "noui", "fresh", "bot", "icon", "autoplay", "autostart", "start",
+        ];
+        let k = key.trim_start_matches('-');
+        if !known.contains(&k) {
+            return None;
+        }
+        Some(self.apply_arg(key, value))
+    }
+
     pub fn apply_arg(&mut self, key: &str, value: &str) -> bool {
         match key.trim_start_matches('-') {
             "scene" => self.scene = Some(value.to_string()),
+            "bot-policy" => {
+                self.bot_policy = value.to_string();
+                self.bot = true;
+                self.autostart = true;
+                self.fresh = true;
+            }
             "hour" => self.hour = value.parse().ok(),
             "cam" => self.cam = Some(value.to_string()),
             "beat" => self.beat = Some(value.to_string()),
@@ -60,6 +83,12 @@ impl GameConfig {
             }
             "autostart" | "start" => {
                 self.autostart = true;
+                return false;
+            }
+            "bot" => {
+                self.bot = true;
+                self.autostart = true;
+                self.fresh = true;
                 return false;
             }
             "icon" => {

@@ -494,6 +494,10 @@ pub fn week_start(s: &State) -> Vec<Step> {
         Step::Title(format!("Semana {w} · Sábado"), chapter_name(w).to_string()),
         shot(ShotKind::PushIn(Who::Sofia)),
     ];
+    let overdue = s.fin.debts.iter().any(|d| d.late_weeks >= 2 && d.overdue > 0);
+    if overdue && !s.flag("mom_rescue") {
+        v.extend(mom_rescue());
+    }
     match w {
         2 => v.extend(week2()),
         3 => v.extend(week3(s)),
@@ -510,6 +514,54 @@ pub fn week_start(s: &State) -> Vec<Step> {
         }
     }));
     v
+}
+
+fn mom_rescue() -> Vec<Step> {
+    vec![
+        msg("mama", "Sofi, me llegó un aviso: tienes cuotas atrasadas y la deuda está creciendo con multas. ¿Conversamos?"),
+        wait(0.8),
+        Step::Expr(Who::Sofia, Expr::Worried),
+        think("No me di cuenta de lo rápido que crecía... cada semana se sumaba una multa."),
+        Step::Dyn(Box::new(|s| {
+            let total: i64 = s.fin.debts.iter().filter(|d| d.lender != "mama").map(|d| d.remaining()).sum();
+            vec![choice(
+                &format!("Tus deudas suman {}. Mamá ofrece pagarlas y que le devuelvas $3.000 por semana, sin interés.", money(total)),
+                vec![
+                    opt_d(
+                        "Aceptar el plan de mamá",
+                        "Una sola cuota pequeña, sin multas",
+                        vec![doit(move |s| {
+                            let total: i64 = s.fin.debts.iter().filter(|d| d.lender != "mama").map(|d| d.remaining()).sum();
+                            s.fin.debts.retain(|d| d.lender == "mama");
+                            let n = ((total as f32) / 3_000.0).ceil().max(1.0) as u32;
+                            s.fin.take_credit("Plan de pago con mamá", total, n, 0.0, "mama");
+                            s.set_flag("mom_rescue");
+                            s.fin.journal(
+                                "Pedir ayuda a tiempo",
+                                "Tus deudas crecían con multas cada semana. Aceptaste reorganizarlas con una cuota que sí cabe en tu presupuesto. Salir de una deuda empieza por reconocerla.",
+                                Skill::Credit,
+                                1,
+                            );
+                            s.toast("check", "Deudas reorganizadas", "Ahora pagas $3.000 por semana a mamá", 0);
+                        })],
+                    ),
+                    opt_d(
+                        "Arreglármelas sola",
+                        "Seguir con las cuotas y multas actuales",
+                        vec![doit(|s| {
+                            s.set_flag("mom_rescue");
+                            s.fin.journal(
+                                "La bola de nieve",
+                                "Decidiste seguir sola con cuotas atrasadas. Cada semana sin pagar suma una multa y más interés: así crece una deuda.",
+                                Skill::Credit,
+                                -1,
+                            );
+                        })],
+                    ),
+                ],
+            )]
+        })),
+    ]
 }
 
 fn week2() -> Vec<Step> {
@@ -891,7 +943,13 @@ fn week8(s: &State) -> Vec<Step> {
                 opts.push(opt_d("Pagar el viaje ($60.000)", "Usando tu meta, ahorro y billetera", vec![doit(|s| pay_trip(s))]));
             } else {
                 opts.push(opt_locked("Pagar el viaje ($60.000)", &format!("Te faltan {}", money(60_000 - total))));
-                opts.push(opt_d("Pedir un crédito de consumo", "Préstamo de $60.000 en 8 cuotas de $8.990", vec![doit(|s| {
+                let free = s.fin.weekly_free();
+                let desc = if free < 8_990 {
+                    format!("8 cuotas de $8.990 · ¡más que tus {} libres por semana!", money(free.max(0)))
+                } else {
+                    "Préstamo de $60.000 en 8 cuotas de $8.990".to_string()
+                };
+                opts.push(opt_d("Pedir un crédito de consumo", &desc, vec![doit(|s| {
                     s.fin.take_credit("Crédito viaje", 60_000, 8, 0.03, "banco");
                     s.fin.earn(60_000, "Crédito de consumo");
                     pay_trip(s);
@@ -1272,7 +1330,10 @@ fn talk_tomas(s: &mut State) -> Vec<Step> {
                             }),
                             say_e(Who::Tomas, Expr::Joy, "¡Vamos!"),
                             Step::Fade(true, 1.0),
-                            doit(|s| s.set_phase(Phase::Evening)),
+                            doit(|s| {
+                                s.set_phase(Phase::Evening);
+                                s.objective = Some(default_objective(s));
+                            }),
                             Step::Fade(false, 1.0),
                             think("La película estuvo buenísima. Y las cabritas, carísimas."),
                         ],
@@ -1417,7 +1478,10 @@ fn work_shift() -> Vec<Step> {
         }),
         Step::Fade(false, 0.6),
         doit(|s| s.dir.waiting = Waiting::Modal),
-        doit(|s| s.set_phase(Phase::Evening)),
+        doit(|s| {
+            s.set_phase(Phase::Evening);
+            s.objective = Some(default_objective(s));
+        }),
     ]
 }
 
