@@ -1,0 +1,119 @@
+name: Release (all platforms)
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - id: wb
+        run: echo "version=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | grep version | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@${{ steps.wb.outputs.version }}
+      - run: |
+          curl -sL https://github.com/WebAssembly/binaryen/releases/download/version_133/binaryen-version_133-x86_64-linux.tar.gz | tar xz
+          echo "$PWD/binaryen-version_133/bin" >> "$GITHUB_PATH"
+      - run: ./scripts/build_web.sh dist/web
+      - uses: actions/upload-artifact@v4
+        with: { name: web, path: dist/web }
+
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --bin finakids
+      - run: |
+          mkdir -p pkg/Finakids && cp target/release/finakids pkg/Finakids/ && cp packaging/icons/icon_256.png pkg/Finakids/finakids.png
+          tar -C pkg -czf Finakids-linux-x64.tar.gz Finakids
+      - uses: actions/upload-artifact@v4
+        with: { name: linux, path: Finakids-linux-x64.tar.gz }
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --bin finakids
+      - shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force pkg/Finakids | Out-Null
+          Copy-Item target/release/finakids.exe pkg/Finakids/
+          Compress-Archive -Path pkg/Finakids -DestinationPath Finakids-windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        with: { name: windows, path: Finakids-windows-x64.zip }
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin,aarch64-apple-ios,aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@v2
+      - run: ./scripts/package_macos.sh dist/macos
+      - run: ./scripts/package_ios.sh dist/ios
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apple
+          path: |
+            dist/macos/Finakids-macos-universal.zip
+            dist/ios/Finakids-ios-unsigned.ipa
+            dist/ios/Finakids-ios-simulator.zip
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-apk --locked
+      - name: Build APK
+        run: |
+          export ANDROID_NDK_ROOT="$ANDROID_NDK_LATEST_HOME"
+          export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          cargo apk build --release --lib
+          find target -name "*.apk" -maxdepth 4
+          cp "$(find target -name 'finakids.apk' | head -1)" Finakids-android-arm64.apk
+      - uses: actions/upload-artifact@v4
+        with: { name: android, path: Finakids-android-arm64.apk }
+
+  publish:
+    needs: [web, linux, windows, macos, android]
+    if: always() && needs.web.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts }
+      - run: |
+          mkdir -p downloads
+          find artifacts -type f \( -name '*.zip' -o -name '*.tar.gz' -o -name '*.apk' -o -name '*.ipa' \) -exec cp {} downloads/ \;
+          ls -la downloads
+          ./scripts/assemble_site.sh artifacts/web downloads dist/site
+      - uses: actions/upload-artifact@v4
+        with: { name: site, path: dist/site }
+      - name: Deploy to the public repo
+        env:
+          SITE_DEPLOY_KEY: ${{ secrets.SITE_DEPLOY_KEY }}
+        run: |
+          if [ -z "$SITE_DEPLOY_KEY" ]; then echo "No deploy key configured; skipping"; exit 0; fi
+          ./scripts/deploy_site.sh dist/site

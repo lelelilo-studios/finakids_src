@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  native:
+    name: Native build (Linux) + tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --bin finakids
+      - run: cargo test --release --lib
+
+  web:
+    name: Web build and deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: wasm-bindgen version from Cargo.lock
+        id: wb
+        run: echo "version=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | grep version | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@${{ steps.wb.outputs.version }}
+      - name: Install binaryen (wasm-opt)
+        run: |
+          curl -sL https://github.com/WebAssembly/binaryen/releases/download/version_133/binaryen-version_133-x86_64-linux.tar.gz | tar xz
+          echo "$PWD/binaryen-version_133/bin" >> "$GITHUB_PATH"
+      - run: ./scripts/build_web.sh dist/web
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web
+          path: dist/web
+      - name: Deploy web build (keeps existing downloads)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          SITE_DEPLOY_KEY: ${{ secrets.SITE_DEPLOY_KEY }}
+        run: |
+          if [ -z "$SITE_DEPLOY_KEY" ]; then echo "No deploy key configured; skipping"; exit 0; fi
+          ./scripts/assemble_site.sh dist/web - dist/site
+          rm -f dist/site/README.md
+          ./scripts/deploy_site.sh dist/site --keep-downloads
