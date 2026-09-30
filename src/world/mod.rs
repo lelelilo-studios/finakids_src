@@ -1177,7 +1177,7 @@ pub fn build_plaza(gpu: &Gpu, r: &mut Renderer) -> Location {
         let (post, glow) = lamppost();
         let yaw = if z > 0.0 { std::f32::consts::PI } else { 0.0 };
         b.base.append_xf(&post, m4ry(Vec3::new(x, 0.0, z), yaw));
-        let li = b.lamp("street", Vec3::new(x, 3.4, z) + Quat::from_rotation_y(yaw) * Vec3::new(0.0, 0.0, 0.35), Vec3::new(1.0, 0.78, 0.5) * 7.0, 9.0, true);
+        let li = b.lamp("street", Vec3::new(x, 3.4, z) + Quat::from_rotation_y(yaw) * Vec3::new(0.0, 0.0, 0.35), Vec3::new(1.0, 0.8, 0.55) * 11.0, 11.0, true);
         let gi = b.prop("street_glow", glow, m4ry(Vec3::new(x, 0.0, z), yaw));
         b.props[gi].0.glow_lamp = Some(li);
         b.props[gi].0.shadow = false;
@@ -1240,11 +1240,11 @@ pub fn build_plaza(gpu: &Gpu, r: &mut Renderer) -> Location {
     b.spawns.push(("vale", counter + Vec3::new(0.0, 0.0, -0.6), 0.0));
     b.spawns.push(("julio", Vec3::new((store.0 + store.1) * 0.5 + 1.5, 0.0, zf + 1.0), 0.0));
     let cam = CamRig {
-        dist: 7.5,
-        pitch: 0.42,
+        dist: 7.8,
+        pitch: 0.3,
         yaw: 0.0,
-        fov: 45.0,
-        look_height: 1.1,
+        fov: 44.0,
+        look_height: 1.45,
         min_dist: 3.5,
         max_dist: 12.0,
     };

@@ -343,9 +343,11 @@ fn apply_pattern(s: ptr<function, Surface>, kind: u32, lp: vec3<f32>, wp: vec3<f
         }
         case 12u: { // foliage
             let v = fbm(lp * 9.0 + wp * 0.5);
-            (*s).albedo = (*s).albedo * (0.65 + 0.7 * v);
-            (*s).rough = 0.7;
-            (*s).translucent = 0.6;
+            let leaves = vnoise(wp * 18.0);
+            (*s).albedo = (*s).albedo * (0.7 + 0.6 * v) * (0.8 + 0.4 * leaves);
+            (*s).rough = 0.75;
+            (*s).translucent = 1.0;
+            (*s).sss = 0.6;
         }
         case 13u: { // asphalt
             let v = vnoise(wp * 60.0);

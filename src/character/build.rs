@@ -1010,14 +1010,15 @@ fn to_skin(mesh: &MeshOut, sdf: &Sdf, mats: &[Mat], sigma: f32, ao_scale: f32, a
     out.verts.reserve(mesh.pos.len());
     for (i, p) in mesh.pos.iter().enumerate() {
         let n = mesh.nrm[i];
-        let (mat, mut w) = sdf.attributes(*p, sigma);
+        let list = mesh.list_for(i);
+        let (mat, mut w) = sdf.attributes_in(*p, sigma, list);
         adjust(*p, mat, &mut w);
-        // SDF ambient occlusion
+        // SDF ambient occlusion (two samples along the normal)
         let mut occ = 0.0;
         let mut wsum = 0.0;
-        for (k, h) in [0.012f32, 0.028, 0.05].iter().enumerate() {
+        for (k, h) in [0.016f32, 0.042].iter().enumerate() {
             let h = h * ao_scale;
-            let d = sdf.eval(*p + n * h);
+            let d = sdf.eval_in(*p + n * h, list);
             let wk = 1.0 / (k as f32 + 1.0);
             occ += ((h - d) / h).clamp(0.0, 1.0) * wk;
             wsum += wk;
@@ -1076,6 +1077,7 @@ pub fn build(a: &Appearance, sk: &Skeleton, q: Quality) -> CharacterMeshes {
         Quality::Low => (0.0095, 0.0036, 0.0036, 0.0046),
     };
     let mut skin = SkinMeshData::default();
+    let t0 = web_time::Instant::now();
 
     // body
     let body = body_sdf(a, sk);
@@ -1106,6 +1108,7 @@ pub fn build(a: &Appearance, sk: &Skeleton, q: Quality) -> CharacterMeshes {
         }
     };
     append_skin(&mut skin, &to_skin(&bm, &body, &mats, 0.012 * k, k, &adjust_body));
+    let t_body = t0.elapsed().as_secs_f32();
 
     // head
     let hs = head_sdf(a);
@@ -1113,17 +1116,21 @@ pub fn build(a: &Appearance, sk: &Skeleton, q: Quality) -> CharacterMeshes {
     let hhi = Vec3::new(0.115, 1.7, 0.145) * k;
     let hm = surface_nets(&hs, hlo, hhi, c_head * k);
     append_skin(&mut skin, &to_skin(&hm, &hs, &mats, 0.01 * k, k * 0.6, &|_, _, _| {}));
+    let t_head = t0.elapsed().as_secs_f32();
 
     // hands
     for side in 0..2 {
         let hsdf = hand_sdf(a, sk, side);
         let w = sk.bind[HAND[side]];
-        let lo = w - Vec3::splat(0.2 * k);
-        let hi = w + Vec3::splat(0.2 * k);
+        let f = (sk.bind[HAND[side]] - sk.bind[FOREARM[side]]).normalize();
+        let c = w + f * 0.075 * k;
+        let lo = c - Vec3::splat(0.125 * k);
+        let hi = c + Vec3::splat(0.125 * k);
         let m = surface_nets(&hsdf, lo, hi, c_hand * k);
         append_skin(&mut skin, &to_skin(&m, &hsdf, &mats, 0.008 * k, k * 0.5, &|_, _, _| {}));
     }
 
+    let t_hands = t0.elapsed().as_secs_f32();
     // hair
     let hair = hair_sdf(a);
     let ylo = if a.hair == Hair::Long { 1.26 } else { 1.42 };
@@ -1149,6 +1156,15 @@ pub fn build(a: &Appearance, sk: &Skeleton, q: Quality) -> CharacterMeshes {
         append_skin(&mut skin, &ponytail(a, sk, &mats));
     }
 
+    log::info!(
+        "{}: body {:.2}s head {:.2}s hands {:.2}s hair {:.2}s, {} verts",
+        a.name,
+        t_body,
+        t_head - t_body,
+        t_hands - t_head,
+        t0.elapsed().as_secs_f32() - t_hands,
+        skin.verts.len()
+    );
     // face layout (relative to the head bone)
     let hp = P::head(k);
     let head_b = sk.bind[HEAD];

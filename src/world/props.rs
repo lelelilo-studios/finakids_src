@@ -733,7 +733,7 @@ pub fn tree(seed: u64, height: f32) -> MeshData {
         let dir = Vec3::new(a.cos(), r.range(0.8, 1.4), a.sin()).normalize();
         m.capsule(base, base + dir * height * 0.18, 0.035 * height / 6.0 + 0.015, 6, &bark);
     }
-    let leaf = Mat::new(0x4a7a34, 0.75).kind(kind::FOLIAGE);
+    let leaf = Mat::new(0x5f9a3e, 0.75).kind(kind::FOLIAGE);
     let n = 14;
     for i in 0..n {
         let a = r.range(0.0, std::f32::consts::TAU);
@@ -749,8 +749,8 @@ pub fn tree(seed: u64, height: f32) -> MeshData {
             let p = Vec3::from(v.pos);
             let d = fbm3(p * 1.8 + Vec3::splat(i as f32), 3) * rad * 0.35;
             v.pos = (p + Vec3::from(v.nrm) * d).to_array();
-            // darker inside
-            let ao = ((p.y - trunk_h) / (height * 0.7)).clamp(0.3, 1.0);
+            // darker inside and toward the bottom of the crown
+            let ao = (0.55 + (p.y - trunk_h) / (height * 0.9)).clamp(0.5, 1.0);
             v.color[3] = (ao * 255.0) as u8;
         }
     }

@@ -297,35 +297,90 @@ impl Sdf {
     pub fn eval(&self, p: Vec3) -> f32 {
         let mut d = 1e9f32;
         for pr in &self.prims {
-            match pr.op {
-                Op::Union => {
-                    if pr.bound_dist(p) >= d {
-                        continue;
-                    }
-                    d = d.min(pr.dist(p));
+            d = Self::apply(pr, d, p);
+        }
+        d
+    }
+
+    #[inline]
+    fn apply(pr: &Prim, d: f32, p: Vec3) -> f32 {
+        match pr.op {
+            Op::Union => {
+                if pr.bound_dist(p) >= d {
+                    return d;
                 }
-                Op::Smooth(k) => {
-                    if pr.bound_dist(p) >= d + k {
-                        continue;
-                    }
-                    d = smin(d, pr.dist(p), k);
+                d.min(pr.dist(p))
+            }
+            Op::Smooth(k) => {
+                if pr.bound_dist(p) >= d + k {
+                    return d;
                 }
-                Op::Subtract(k) => {
-                    // skip when the subtracted shape cannot affect the result
-                    let bd = pr.bound_dist(p);
-                    if bd > 0.0 && bd >= k - d {
-                        continue;
-                    }
-                    let pd = pr.dist(p);
-                    d = if k > 0.0 { smax(d, -pd, k) } else { d.max(-pd) };
+                smin(d, pr.dist(p), k)
+            }
+            Op::Subtract(k) => {
+                let bd = pr.bound_dist(p);
+                if bd > 0.0 && bd >= k - d {
+                    return d;
                 }
-                Op::Intersect(k) => {
-                    let pd = pr.dist(p);
-                    d = if k > 0.0 { smax(d, pd, k) } else { d.max(pd) };
+                let pd = pr.dist(p);
+                if k > 0.0 {
+                    smax(d, -pd, k)
+                } else {
+                    d.max(-pd)
+                }
+            }
+            Op::Intersect(k) => {
+                let pd = pr.dist(p);
+                if k > 0.0 {
+                    smax(d, pd, k)
+                } else {
+                    d.max(pd)
                 }
             }
         }
+    }
+
+    /// Evaluates only the listed prims (in their original order).
+    #[inline]
+    pub fn eval_in(&self, p: Vec3, list: &[u16]) -> f32 {
+        let mut d = 1e9f32;
+        for &i in list {
+            d = Self::apply(&self.prims[i as usize], d, p);
+        }
         d
+    }
+
+    /// Prims that can influence points within the box [lo, hi] grown by `r`.
+    pub fn candidates(&self, lo: Vec3, hi: Vec3, r: f32) -> Vec<u16> {
+        let mut out = Vec::new();
+        for (i, pr) in self.prims.iter().enumerate() {
+            if matches!(pr.op, Op::Intersect(_)) || matches!(pr.shape, Shape::HalfSpace { .. }) {
+                out.push(i as u16);
+                continue;
+            }
+            let k = match pr.op {
+                Op::Smooth(k) | Op::Subtract(k) => k,
+                _ => 0.0,
+            };
+            let gap = (pr.lo - hi).max(lo - pr.hi).max(Vec3::ZERO).length();
+            if gap <= r + k {
+                out.push(i as u16);
+            }
+        }
+        out
+    }
+
+    /// Tetrahedral gradient (4 evaluations).
+    pub fn gradient_in(&self, p: Vec3, e: f32, list: &[u16]) -> Vec3 {
+        let k0 = Vec3::new(1.0, -1.0, -1.0);
+        let k1 = Vec3::new(-1.0, -1.0, 1.0);
+        let k2 = Vec3::new(-1.0, 1.0, -1.0);
+        let k3 = Vec3::new(1.0, 1.0, 1.0);
+        let g = k0 * self.eval_in(p + k0 * e, list)
+            + k1 * self.eval_in(p + k1 * e, list)
+            + k2 * self.eval_in(p + k2 * e, list)
+            + k3 * self.eval_in(p + k3 * e, list);
+        g.normalize_or(Vec3::Y)
     }
 
     pub fn gradient(&self, p: Vec3, e: f32) -> Vec3 {
@@ -338,9 +393,16 @@ impl Sdf {
     /// Material and bone weights at a surface point.
     /// Returns (material of nearest additive prim, second material, blend, weights[(bone, w)]).
     pub fn attributes(&self, p: Vec3, sigma: f32) -> (u8, [(u8, f32); 4]) {
+        let all: Vec<u16> = (0..self.prims.len() as u16).collect();
+        self.attributes_in(p, sigma, &all)
+    }
+
+    pub fn attributes_in(&self, p: Vec3, sigma: f32, list: &[u16]) -> (u8, [(u8, f32); 4]) {
         let mut best = (f32::MAX, 0u8);
         let mut dists: Vec<(f32, usize)> = Vec::with_capacity(16);
-        for (i, pr) in self.prims.iter().enumerate() {
+        for &li in list {
+            let i = li as usize;
+            let pr = &self.prims[i];
             if matches!(pr.op, Op::Subtract(_) | Op::Intersect(_)) {
                 continue;
             }
@@ -390,9 +452,20 @@ pub struct MeshOut {
     pub pos: Vec<Vec3>,
     pub nrm: Vec<Vec3>,
     pub idx: Vec<u32>,
+    /// Candidate prim lists per super block, and each vertex's list index.
+    pub lists: Vec<Vec<u16>>,
+    pub vlist: Vec<u32>,
+}
+
+impl MeshOut {
+    pub fn list_for(&self, v: usize) -> &[u16] {
+        &self.lists[self.vlist[v] as usize]
+    }
 }
 
 /// Sparse surface nets over the box [lo, hi] with the given cell size.
+/// Space is split into super blocks with their own candidate prim lists, and
+/// small blocks far from the surface are skipped.
 pub fn surface_nets(sdf: &Sdf, lo: Vec3, hi: Vec3, cell: f32) -> MeshOut {
     let size = hi - lo;
     let nx = (size.x / cell).ceil() as usize + 1;
@@ -403,10 +476,24 @@ pub fn surface_nets(sdf: &Sdf, lo: Vec3, hi: Vec3, cell: f32) -> MeshOut {
     let mut exact = vec![false; nx * ny * nz];
     let gp = |x: usize, y: usize, z: usize| lo + Vec3::new(x as f32, y as f32, z as f32) * cell;
 
-    // coarse blocks
     const B: usize = 4;
+    const SB: usize = 16;
     let half_diag = (B as f32) * cell * 0.5 * 3f32.sqrt();
     let margin = half_diag + cell * 2.5;
+    let max_disp = sdf.prims.iter().map(|p| p.disp).fold(0.0, f32::max);
+    let (sbx, sby, sbz) = (nx.div_ceil(SB), ny.div_ceil(SB), nz.div_ceil(SB));
+    let mut lists: Vec<Vec<u16>> = Vec::with_capacity(sbx * sby * sbz);
+    for zb in 0..sbz {
+        for yb in 0..sby {
+            for xb in 0..sbx {
+                let a = gp(xb * SB, yb * SB, zb * SB);
+                let b = gp(((xb + 1) * SB).min(nx - 1), ((yb + 1) * SB).min(ny - 1), ((zb + 1) * SB).min(nz - 1));
+                lists.push(sdf.candidates(a, b, margin + cell * 2.0 + max_disp));
+            }
+        }
+    }
+    let sb_of = |x: usize, y: usize, z: usize| ((z / SB).min(sbz - 1) * sby + (y / SB).min(sby - 1)) * sbx + (x / SB).min(sbx - 1);
+
     let mut bz = 0;
     while bz < nz {
         let mut by = 0;
@@ -416,8 +503,9 @@ pub fn surface_nets(sdf: &Sdf, lo: Vec3, hi: Vec3, cell: f32) -> MeshOut {
                 let ex = (bx + B).min(nx - 1);
                 let ey = (by + B).min(ny - 1);
                 let ez = (bz + B).min(nz - 1);
+                let list = &lists[sb_of(bx, by, bz)];
                 let c = (gp(bx, by, bz) + gp(ex, ey, ez)) * 0.5;
-                let d = sdf.eval(c);
+                let d = if list.is_empty() { 1.0 } else { sdf.eval_in(c, list) };
                 let far = d.abs() > margin;
                 for z in bz..=ez {
                     for y in by..=ey {
@@ -428,7 +516,9 @@ pub fn surface_nets(sdf: &Sdf, lo: Vec3, hi: Vec3, cell: f32) -> MeshOut {
                                     vals[i] = d;
                                 }
                             } else if !exact[i] {
-                                vals[i] = sdf.eval(gp(x, y, z));
+                                // points on block borders may belong to a neighbouring super block
+                                let l = &lists[sb_of(x, y, z)];
+                                vals[i] = if l.is_empty() { 1.0 } else { sdf.eval_in(gp(x, y, z), l) };
                                 exact[i] = true;
                             }
                         }
@@ -445,6 +535,7 @@ pub fn surface_nets(sdf: &Sdf, lo: Vec3, hi: Vec3, cell: f32) -> MeshOut {
     let cidx = |x: usize, y: usize, z: usize| (z * (ny - 1) + y) * (nx - 1) + x;
     let mut cell_vert = vec![u32::MAX; (nx - 1) * (ny - 1) * (nz - 1)];
     let mut pos: Vec<Vec3> = Vec::new();
+    let mut vlist: Vec<u32> = Vec::new();
     const CORNERS: [(usize, usize, usize); 8] = [
         (0, 0, 0),
         (1, 0, 0),
@@ -498,6 +589,7 @@ pub fn surface_nets(sdf: &Sdf, lo: Vec3, hi: Vec3, cell: f32) -> MeshOut {
                 let p = lo + (Vec3::new(x as f32, y as f32, z as f32) + local) * cell;
                 cell_vert[cidx(x, y, z)] = pos.len() as u32;
                 pos.push(p);
+                vlist.push(sb_of(x, y, z) as u32);
             }
         }
     }
@@ -509,7 +601,6 @@ pub fn surface_nets(sdf: &Sdf, lo: Vec3, hi: Vec3, cell: f32) -> MeshOut {
             return;
         }
         let q = if flip { [q[0], q[3], q[2], q[1]] } else { q };
-        // choose the shorter diagonal
         let d02 = pos[q[0] as usize].distance_squared(pos[q[2] as usize]);
         let d13 = pos[q[1] as usize].distance_squared(pos[q[3] as usize]);
         if d02 <= d13 {
@@ -523,7 +614,6 @@ pub fn surface_nets(sdf: &Sdf, lo: Vec3, hi: Vec3, cell: f32) -> MeshOut {
             for x in 0..nx {
                 let v0 = vals[idx3(x, y, z)];
                 let in0 = v0 < 0.0;
-                // x edge
                 if x + 1 < nx && y > 0 && z > 0 && y < ny - 1 && z < nz - 1 {
                     let v1 = vals[idx3(x + 1, y, z)];
                     if in0 != (v1 < 0.0) {
@@ -536,7 +626,6 @@ pub fn surface_nets(sdf: &Sdf, lo: Vec3, hi: Vec3, cell: f32) -> MeshOut {
                         emit(q, !in0, &pos);
                     }
                 }
-                // y edge
                 if y + 1 < ny && x > 0 && z > 0 && x < nx - 1 && z < nz - 1 {
                     let v1 = vals[idx3(x, y + 1, z)];
                     if in0 != (v1 < 0.0) {
@@ -549,7 +638,6 @@ pub fn surface_nets(sdf: &Sdf, lo: Vec3, hi: Vec3, cell: f32) -> MeshOut {
                         emit(q, !in0, &pos);
                     }
                 }
-                // z edge
                 if z + 1 < nz && x > 0 && y > 0 && x < nx - 1 && y < ny - 1 {
                     let v1 = vals[idx3(x, y, z + 1)];
                     if in0 != (v1 < 0.0) {
@@ -569,14 +657,18 @@ pub fn surface_nets(sdf: &Sdf, lo: Vec3, hi: Vec3, cell: f32) -> MeshOut {
     // project vertices onto the surface and compute normals
     let e = cell * 0.5;
     let mut nrm = Vec::with_capacity(pos.len());
-    for p in pos.iter_mut() {
-        for _ in 0..2 {
-            let d = sdf.eval(*p);
-            let g = sdf.gradient(*p, e);
-            let step = (-d).clamp(-cell * 0.5, cell * 0.5);
-            *p += g * step;
-        }
-        nrm.push(sdf.gradient(*p, e));
+    for (i, p) in pos.iter_mut().enumerate() {
+        let list = &lists[vlist[i] as usize];
+        let d = sdf.eval_in(*p, list);
+        let g = sdf.gradient_in(*p, e, list);
+        *p += g * (-d).clamp(-cell * 0.5, cell * 0.5);
+        nrm.push(sdf.gradient_in(*p, e * 0.7, list));
     }
-    MeshOut { pos, nrm, idx }
+    MeshOut {
+        pos,
+        nrm,
+        idx,
+        lists,
+        vlist,
+    }
 }
