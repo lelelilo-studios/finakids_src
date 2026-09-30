@@ -13,8 +13,8 @@ if [ -n "${SITE_DEPLOY_KEY:-}" ]; then
 fi
 URL="git@github.com:$REPO.git"
 WORK=$(mktemp -d)
-git config --global user.name "${GIT_AUTHOR_NAME:-github-actions[bot]}" >/dev/null 2>&1 || true
-git config --global user.email "${GIT_AUTHOR_EMAIL:-41898282+github-actions[bot]@users.noreply.github.com}" >/dev/null 2>&1 || true
+NAME=${GIT_AUTHOR_NAME:-$(git config user.name || echo "github-actions[bot]")}
+EMAIL=${GIT_AUTHOR_EMAIL:-$(git config user.email || echo "41898282+github-actions[bot]@users.noreply.github.com")}
 if [ "$MODE" = "--keep-downloads" ] && git clone --depth 1 "$URL" "$WORK/current" 2>/dev/null; then
   if [ -d "$WORK/current/downloads" ]; then cp -r "$WORK/current/downloads" "$SITE/"; fi
   if [ -f "$WORK/current/README.md" ] && [ ! -f "$SITE/README.md" ]; then cp "$WORK/current/README.md" "$SITE/"; fi
@@ -23,6 +23,6 @@ cd "$SITE"
 rm -rf .git
 git init -q -b main
 git add -A
-git commit -q -m "Publicar Finakids $(date -u +%Y-%m-%dT%H:%MZ)"
+git -c user.name="$NAME" -c user.email="$EMAIL" commit -q -m "Publicar Finakids $(date -u +%Y-%m-%dT%H:%MZ)"
 git push -f "$URL" main
 echo "Published to https://github.com/$REPO"
