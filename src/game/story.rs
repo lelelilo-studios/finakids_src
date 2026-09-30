@@ -1855,6 +1855,26 @@ pub fn debug_beat(s: &mut State, b: &str) {
             s.goto(Loc::Plaza, "home");
             s.set_phase(Phase::Afternoon);
         }
+        "armtest" => {
+            use crate::character::anim::{ph, Action, Set};
+            let k = s.chars[0].k();
+            let a = Action {
+                name: "armtest",
+                hold: true,
+                phases: vec![ph(
+                    0.5,
+                    crate::math::Ease::InOut,
+                    vec![
+                        Set::Hand(1, Vec3::new(-0.35, 1.35, 0.25) * k, Vec3::new(0.0, 0.0, 1.0), 1.0),
+                        Set::Hand(0, Vec3::new(0.25, 1.0, 0.3) * k, Vec3::new(0.0, 1.0, 0.0), 1.0),
+                    ],
+                )],
+            };
+            let p = s.chars[0].anim.pos + Vec3::new(0.0, 0.0, 0.8);
+            s.chars[0].anim.teleport(p, 0.0);
+            s.chars[0].anim.play(a);
+            s.chars[0].held[1] = Some(HeldProp::Phone);
+        }
         _ => {}
     }
 }

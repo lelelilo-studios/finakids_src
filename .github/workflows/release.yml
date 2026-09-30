@@ -87,9 +87,21 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo install cargo-apk --locked
       - name: Build APK
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
           export ANDROID_NDK_ROOT="$ANDROID_NDK_LATEST_HOME"
           export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.p12"
+            export CARGO_APK_RELEASE_KEYSTORE="$RUNNER_TEMP/release.p12"
+            export CARGO_APK_RELEASE_KEYSTORE_PASSWORD="$KS_PASS"
+          else
+            keytool -genkeypair -keystore "$RUNNER_TEMP/release.p12" -storetype PKCS12 -storepass android -alias finakids -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Finakids"
+            export CARGO_APK_RELEASE_KEYSTORE="$RUNNER_TEMP/release.p12"
+            export CARGO_APK_RELEASE_KEYSTORE_PASSWORD=android
+          fi
           cargo apk build --release --lib
           find target -name "*.apk" -maxdepth 4
           cp "$(find target -name 'finakids.apk' | head -1)" Finakids-android-arm64.apk

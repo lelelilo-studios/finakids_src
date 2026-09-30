@@ -701,11 +701,15 @@ impl Animator {
         let leg_len = sk.thigh_len + sk.shin_len;
         let mut hips_off = hips;
         // sitting
+        let mut sit_drop = 0.0;
         if let Stance::Sit { seat, .. } = self.stance {
             let seat_local = inv_root * (seat - self.pos);
             let seated = Vec3::new(seat_local.x, seat_local.y + 0.14 * k - hip_bind.y, seat_local.z - 0.02);
             let s = ease_in_out(self.sit_amt);
             hips_off = hips_off.lerp(seated, s);
+            sit_drop = seated.y * s;
+        } else if self.sit_amt > 0.0 {
+            sit_drop = hips_off.y.min(0.0) * self.sit_amt;
         }
         for side in 0..2 {
             let hip_j = sk.bind[THIGH[side]] + hips_off;
@@ -746,7 +750,7 @@ impl Animator {
         let mut want_pitch = self.ch.head_pitch;
         let mut have_look = false;
         let look_target_local = if self.ch.look_w > 0.01 {
-            self.ch.look_local
+            self.ch.look_local.map(|p| p + Vec3::Y * sit_drop)
         } else {
             None
         };
@@ -834,12 +838,14 @@ impl Animator {
             }
             let rest = rest.lerp(sitting_rest, self.sit_amt);
             self.rest.hand[side].pos = rest;
-            let hc = self.ch.hand[side];
+            let mut hc = self.ch.hand[side];
+            // gesture targets are authored standing: follow the body when seated
+            hc.pos.y += sit_drop;
             let target = rest.lerp(hc.pos, hc.w);
             let palm_rest = Vec3::new(-s, -0.2, 0.15).normalize();
             let palm_rest = palm_rest.lerp(Vec3::NEG_Y, self.sit_amt).normalize();
             let palm = palm_rest.lerp(hc.palm, hc.w).normalize_or(palm_rest);
-            let pole = Vec3::new(s * 0.6, -0.25, -1.0).normalize();
+            let pole = Vec3::new(s * 0.45, -1.0, -0.5).normalize();
             let (elbow, wrist) = two_bone(shoulder, target, sk.upper_len, sk.fore_len, pole);
             let up_dir = (elbow - shoulder).normalize();
             let fore_dir = (wrist - elbow).normalize();

@@ -225,12 +225,13 @@ impl Character {
         let s = sx(side);
         let f = self.anim.skel.bone_dir(HAND[side]);
         let n = f.cross(Vec3::Z).normalize() * s;
-        let t = f.cross(n).normalize() * -s;
         let base = self.anim.skel.bind[HAND[side]];
-        // prop frame in bind space: y = along the fingers, z = out of the palm
-        let rot = Quat::from_mat3(&glam::Mat3::from_cols(t, f, -n));
+        // prop frame in bind space: y = along the fingers, z = out of the palm (right-handed)
+        let x = f.cross(n).normalize();
+        let t = x;
+        let rot = Quat::from_mat3(&glam::Mat3::from_cols(x, f, n));
         let off = match p {
-            HeldProp::Phone => f * 0.07 * k + n * 0.018 * k,
+            HeldProp::Phone => f * 0.075 * k + n * 0.02 * k,
             HeldProp::Cup => f * 0.05 * k + n * 0.045 * k + t * 0.02 * k,
             HeldProp::Bag => f * 0.08 * k,
             HeldProp::Bills => f * 0.07 * k + n * 0.012 * k,
