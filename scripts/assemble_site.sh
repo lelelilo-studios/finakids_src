@@ -6,6 +6,9 @@ WEB=$1; DL=$2; OUT=$3
 rm -rf "$OUT" && mkdir -p "$OUT"
 cp -r "$WEB"/. "$OUT"/
 touch "$OUT/.nojekyll"
+# keep the build pipeline that lives in the public repo
+mkdir -p "$OUT/.github/workflows"
+cp "$(dirname "$0")/../packaging/public-ci/build.yml" "$OUT/.github/workflows/build.yml"
 if [ "$DL" != "-" ] && [ -d "$DL" ]; then
   mkdir -p "$OUT/downloads"
   cp "$DL"/* "$OUT/downloads/" 2>/dev/null || true

@@ -1,9 +1,8 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+  # Actions are currently unavailable for private repos on this account;
+  # the public repo's build.yml is used instead. Run manually if billing is enabled.
   workflow_dispatch:
 
 concurrency:
