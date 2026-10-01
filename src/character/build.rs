@@ -58,10 +58,12 @@ pub fn materials(a: &Appearance) -> Vec<Mat> {
         _ => kind::FABRIC,
     };
     let skin = crate::math::rgb(a.skin);
+    // natural lip tone: a rosier, slightly darker version of the skin (subtler on men)
+    let lf = lerp(1.0, 0.55, a.masc);
     let lip = [
-        (skin[0] as f32 * 0.9) as u8,
-        (skin[1] as f32 * 0.66) as u8,
-        (skin[2] as f32 * 0.66) as u8,
+        (skin[0] as f32 * (1.0 - 0.06 * lf)) as u8,
+        (skin[1] as f32 * (1.0 - 0.27 * lf)) as u8,
+        (skin[2] as f32 * (1.0 - 0.22 * lf)) as u8,
         255,
     ];
     let lip_hex = ((lip[0] as u32) << 16) | ((lip[1] as u32) << 8) | lip[2] as u32;
@@ -73,7 +75,16 @@ pub fn materials(a: &Appearance) -> Vec<Mat> {
         Mat::new(a.bottom_color, 0.9).kind(bottom_kind),
         Mat::new(a.shoe_color, 0.55).kind(kind::LEATHER),
         Mat::new(a.sole_color, 0.8),
-        Mat::new(a.hair_color, 0.5).kind(kind::HAIR),
+        Mat::new(
+            a.hair_color,
+            match a.hair {
+                Hair::Curly => 0.74,
+                Hair::Buzz => 0.8,
+                Hair::Bun | Hair::Short => 0.6,
+                _ => 0.52,
+            },
+        )
+        .kind(kind::HAIR),
         Mat::new(lip_hex, 0.35).kind(kind::SKIN),
         Mat::new(0x2a2320, 0.45).kind(kind::LEATHER),
         Mat::new(0xefebe4, 0.8).kind(kind::FABRIC),
@@ -88,8 +99,10 @@ pub fn materials(a: &Appearance) -> Vec<Mat> {
     ]
 }
 
-pub const HEAD_SCALE: f32 = 1.08;
-pub const HEAD_PIVOT: f32 = 1.47;
+/// The head is modelled at realistic size and scaled up about eye level for a slightly
+/// stylized, more expressive proportion (the chin comes down, shortening the neck).
+pub const HEAD_SCALE: f32 = 1.17;
+pub const HEAD_PIVOT: f32 = 1.60;
 
 struct P {
     k: f32,
@@ -405,6 +418,25 @@ pub fn body_sdf(a: &Appearance, sk: &Skeleton) -> Sdf {
     let loose = matches!(a.top, Top::Hoodie | Top::Sweater | Top::Jacket);
     add_clipped(&mut sdf, &parts.chest, small, M_TOP, if loose { infl * 0.5 } else { infl }, hem_clip, disp);
     add_clipped(&mut sdf, &parts.pelvis[..1], small, M_TOP, infl + p.r(0.004), hem_clip, disp);
+    // the base of the neck is covered up to the collar plane (higher at the nape, lower
+    // at the throat), so no skin pokes through the shoulders of the garment
+    let collar_c = p.v(0.0, 1.375, -0.012);
+    let collar_n = if a.top == Top::Hoodie { Vec3::Y } else { Vec3::new(0.0, 1.0, 0.26).normalize() };
+    let (cover_up, cover_mat) = match a.top {
+        Top::Hoodie => (0.017, M_TOP),
+        Top::Jacket => (0.02, M_TOP),
+        Top::Sweater => (0.008, M_TOP),
+        _ => (0.0, M_TOP),
+    };
+    add_clipped(
+        &mut sdf,
+        &parts.neck,
+        small,
+        cover_mat,
+        infl * 0.6 + p.r(0.002),
+        (collar_n, (collar_c + Vec3::Y * p.r(cover_up)).dot(collar_n)),
+        0.0,
+    );
     for side in 0..2 {
         let shoulder = sk.bind[UPARM[side]];
         let elbow = sk.bind[FOREARM[side]];
@@ -446,7 +478,6 @@ pub fn body_sdf(a: &Appearance, sk: &Skeleton) -> Sdf {
             .clip(Vec3::Y, hem_y + p.r(0.035)),
     );
     // collar / hood / details
-    let collar_c = p.v(0.0, 1.375, -0.012);
     match a.top {
         Top::Hoodie => {
             sdf.add(Prim::new(
@@ -456,7 +487,7 @@ pub fn body_sdf(a: &Appearance, sk: &Skeleton) -> Sdf {
                 BoneSpec::blend(CHEST as u8, NECK as u8, p.v(0.0, 1.3, 0.0), p.v(0.0, 1.45, 0.0), 0.3, 1.2),
             ));
             sdf.add(Prim::new(
-                torus(collar_c + Vec3::new(0.0, -0.016, 0.0) * p.k, p.r(0.068), p.r(0.016), Vec3::new(0.0, 1.0, -0.35)),
+                torus(collar_c + Vec3::new(0.0, -0.006, 0.0) * p.k, p.r(0.067), p.r(0.019), Vec3::new(0.0, 1.0, -0.35)),
                 Op::Smooth(p.r(0.012)),
                 M_TOP,
                 BoneSpec::blend(CHEST as u8, NECK as u8, p.v(0.0, 1.3, 0.0), p.v(0.0, 1.45, 0.0), 0.3, 1.0),
@@ -476,8 +507,9 @@ pub fn body_sdf(a: &Appearance, sk: &Skeleton) -> Sdf {
             }
         }
         Top::Tee | Top::Apron | Top::Sweater => {
+            let thick = if a.top == Top::Sweater { 0.013 } else { 0.0085 };
             sdf.add(Prim::new(
-                torus(collar_c, p.r(0.064), p.r(0.009), Vec3::new(0.0, 1.0, -0.25)),
+                torus(collar_c + Vec3::Y * p.r(cover_up), p.r(0.061), p.r(thick), collar_n),
                 Op::Smooth(p.r(0.008)),
                 M_TOP,
                 BoneSpec::single(CHEST as u8),
@@ -485,7 +517,7 @@ pub fn body_sdf(a: &Appearance, sk: &Skeleton) -> Sdf {
         }
         Top::Blouse => {
             sdf.add(Prim::new(
-                torus(collar_c + Vec3::new(0.0, 0.004, 0.004) * p.k, p.r(0.066), p.r(0.0075), Vec3::new(0.0, 1.0, -0.3)),
+                torus(collar_c + Vec3::new(0.0, 0.001, 0.0) * p.k, p.r(0.062), p.r(0.0095), collar_n),
                 Op::Smooth(p.r(0.004)),
                 M_TOP2,
                 BoneSpec::single(CHEST as u8),
@@ -493,14 +525,14 @@ pub fn body_sdf(a: &Appearance, sk: &Skeleton) -> Sdf {
         }
         Top::Jacket => {
             sdf.add(Prim::new(
-                torus(collar_c + p.v(0.0, 0.01, 0.0), p.r(0.07), p.r(0.018), Vec3::new(0.0, 1.0, -0.3)),
+                torus(collar_c + p.v(0.0, 0.006, 0.0), p.r(0.07), p.r(0.018), collar_n),
                 Op::Smooth(p.r(0.01)),
                 M_TOP,
                 BoneSpec::blend(CHEST as u8, NECK as u8, p.v(0.0, 1.3, 0.0), p.v(0.0, 1.45, 0.0), 0.3, 1.0),
             ));
             // shirt collar peeking
             sdf.add(Prim::new(
-                torus(collar_c + p.v(0.0, 0.03, 0.01), p.r(0.055), p.r(0.008), Vec3::new(0.0, 1.0, -0.3)),
+                torus(collar_c + p.v(0.0, 0.026, 0.0), p.r(0.057), p.r(0.008), collar_n),
                 Op::Smooth(p.r(0.004)),
                 M_TOP2,
                 BoneSpec::blend(CHEST as u8, NECK as u8, p.v(0.0, 1.3, 0.0), p.v(0.0, 1.45, 0.0), 0.3, 1.0),
@@ -587,50 +619,64 @@ pub fn head_sdf(a: &Appearance) -> Sdf {
     let nk = 0.92 + m * 0.14 + adult * 0.04;
     // shorter lower face for feminine / young faces
     let lower = 0.0045 * fem + 0.003 * (1.0 - adult);
-    // upper neck (overlaps the body mesh neck)
+    // upper neck (overlaps the body mesh neck; body-space so it matches the torso)
+    let pb = P::body(a.height / 1.65);
+    let neck_t = (0.9 + a.build * 0.25 + a.age.min(1.2) * 0.04) * (1.0 + m * 0.12);
     sdf.add(Prim::new(
-        cone(p.v(0.0, 1.41, -0.02), p.v(0.0, 1.51, -0.012), p.r(0.048) * (1.0 + m * 0.14), p.r(0.045) * (1.0 + m * 0.14)),
+        cone(pb.v(0.0, 1.42, -0.0185), pb.v(0.0, 1.5, -0.014), pb.r(0.0524) * neck_t, pb.r(0.0505) * neck_t),
         Op::Union,
         M_SKIN,
-        BoneSpec::blend(NECK as u8, HEAD as u8, p.v(0.0, 1.44, 0.0), p.v(0.0, 1.5, 0.0), 0.0, 1.0),
+        BoneSpec::blend(NECK as u8, HEAD as u8, pb.v(0.0, 1.43, 0.0), pb.v(0.0, 1.49, 0.0), 0.0, 1.0),
     ));
     // cranium
-    sdf.add(Prim::new(ell(p.v(0.0, 1.572, -0.012), Vec3::new(p.r(0.073), p.r(0.082), p.r(0.094)), Quat::IDENTITY), sm(0.03), M_SKIN, head));
-    sdf.add(Prim::new(ell(p.v(0.0, 1.557, -0.045), Vec3::new(p.r(0.066), p.r(0.07), p.r(0.064)), Quat::IDENTITY), sm(0.02), M_SKIN, head));
+    sdf.add(Prim::new(ell(p.v(0.0, 1.572, -0.012), Vec3::new(p.r(0.069), p.r(0.082), p.r(0.094)), Quat::IDENTITY), sm(0.03), M_SKIN, head));
+    sdf.add(Prim::new(ell(p.v(0.0, 1.557, -0.045), Vec3::new(p.r(0.064), p.r(0.07), p.r(0.064)), Quat::IDENTITY), sm(0.02), M_SKIN, head));
     // forehead
-    sdf.add(Prim::new(ell(p.v(0.0, 1.598, 0.03), Vec3::new(p.r(0.062), p.r(0.052), p.r(0.057)), Quat::IDENTITY), sm(0.02), M_SKIN, head));
-    // face mass
-    sdf.add(Prim::new(ell(p.v(0.0, 1.535 + lower * 0.5, 0.018), Vec3::new(p.r(0.054) * jaw_w, p.r(0.061 - lower * 0.5), p.r(0.061)), Quat::IDENTITY), sm(0.03), M_SKIN, head));
+    sdf.add(Prim::new(ell(p.v(0.0, 1.598, 0.03), Vec3::new(p.r(0.06), p.r(0.052), p.r(0.057)), Quat::IDENTITY), sm(0.02), M_SKIN, head));
+    // face mass: an egg that narrows toward the chin
+    sdf.add(Prim::new(
+        ell(p.v(0.0, 1.537 + lower * 0.5, 0.02), Vec3::new(p.r(0.0495) * jaw_w, p.r(0.062 - lower * 0.5), p.r(0.0595)), Quat::IDENTITY),
+        sm(0.03),
+        M_SKIN,
+        head,
+    ));
     for side in 0..2 {
         let s = sx(side);
-        // jaw line
+        // jaw line: from the angle below the ear to the side of the chin
         sdf.add(Prim::new(
             Shape::Capsule {
-                a: p.v(0.048 * s * jaw_w, 1.526, -0.012),
-                b: p.v(0.014 * s * jaw_w, 1.474 + lower, 0.054),
-                r: p.r(0.015 + m * 0.004),
+                a: p.v(0.0435 * s * jaw_w, 1.507 + lower * 0.5, -0.004),
+                b: p.v(0.017 * s * jaw_w, 1.4755 + lower, 0.053),
+                r: p.r(0.0122 + m * 0.0045),
             },
-            sm(0.028),
+            sm(0.034),
             M_SKIN,
             head,
         ));
-        // cheeks (higher and rounder for feminine faces)
-        sdf.add(Prim::new(Shape::Sphere { c: p.v(0.036 * s, 1.541 + 0.004 * fem, 0.052), r: p.r(0.02 + 0.002 * fem) }, sm(0.022), M_SKIN, head));
+        // masseter: fills the hollow between cheekbone and jaw so the cheek falls in one plane
         sdf.add(Prim::new(
-            ell(p.v(0.049 * s, 1.553, 0.048), Vec3::new(p.r(0.022), p.r(0.012), p.r(0.018)), Quat::IDENTITY),
-            sm(0.015),
+            ell(p.v(0.031 * s * jaw_w, 1.512 + lower * 0.5, 0.034), Vec3::new(p.r(0.015), p.r(0.025), p.r(0.027)), Quat::from_rotation_x(-0.4)),
+            sm(0.03),
+            M_SKIN,
+            head,
+        ));
+        // cheeks: soft apples in front, a subtle cheekbone toward the ear
+        sdf.add(Prim::new(Shape::Sphere { c: p.v(0.033 * s, 1.5385 + 0.003 * fem, 0.0565), r: p.r(0.0168 + 0.0015 * fem) }, sm(0.022), M_SKIN, head));
+        sdf.add(Prim::new(
+            ell(p.v(0.0475 * s, 1.552, 0.04), Vec3::new(p.r(0.017), p.r(0.0105), p.r(0.017)), Quat::IDENTITY),
+            sm(0.016),
             M_SKIN,
             head,
         ));
         // ears
         sdf.add(Prim::new(
-            ell(p.v(0.071 * s, 1.553, -0.013), Vec3::new(p.r(0.0095), p.r(0.025), p.r(0.017)), Quat::from_rotation_y(-0.2 * s) * Quat::from_rotation_x(0.15)),
+            ell(p.v(0.0675 * s, 1.5505, -0.012), Vec3::new(p.r(0.0085), p.r(0.0225), p.r(0.0155)), Quat::from_rotation_y(-0.25 * s) * Quat::from_rotation_x(0.15)),
             sm(0.006),
             M_SKIN,
             head,
         ));
         sdf.add(Prim::new(
-            ell(p.v(0.079 * s, 1.556, -0.01), Vec3::new(p.r(0.005), p.r(0.016), p.r(0.01)), Quat::from_rotation_y(-0.2 * s)),
+            ell(p.v(0.0748 * s, 1.553, -0.0095), Vec3::new(p.r(0.0045), p.r(0.0145), p.r(0.009)), Quat::from_rotation_y(-0.25 * s)),
             Op::Subtract(p.r(0.004)),
             M_SKIN,
             head,
@@ -638,7 +684,7 @@ pub fn head_sdf(a: &Appearance) -> Sdf {
     }
     // chin
     sdf.add(Prim::new(
-        ell(p.v(0.0, 1.472 + lower, 0.064), Vec3::new(p.r(0.02) * (1.0 + m * 0.3), p.r(0.018), p.r(0.018)), Quat::IDENTITY),
+        ell(p.v(0.0, 1.4725 + lower, 0.0675), Vec3::new(p.r(0.0195) * (1.0 + m * 0.3), p.r(0.0175), p.r(0.0185)), Quat::IDENTITY),
         sm(0.02),
         M_SKIN,
         head,
@@ -654,22 +700,28 @@ pub fn head_sdf(a: &Appearance) -> Sdf {
         M_SKIN,
         head,
     ));
-    // nose
+    // nose: slim bridge, small rounded tip, soft wings
     sdf.add(Prim::new(
-        Shape::Capsule {
-            a: p.v(0.0, 1.574, 0.082),
-            b: p.v(0.0, 1.539, 0.092 * nk.sqrt()),
-            r: p.r(0.0072) * nk,
+        Shape::RoundCone {
+            a: p.v(0.0, 1.5715, 0.0835),
+            b: p.v(0.0, 1.540, 0.0935 * nk.sqrt()),
+            ra: p.r(0.0052) * nk,
+            rb: p.r(0.0062) * nk,
         },
-        sm(0.012),
+        sm(0.011),
         M_SKIN,
         head,
     ));
-    sdf.add(Prim::new(Shape::Sphere { c: p.v(0.0, 1.533, 0.0905 + 0.004 * (nk - 1.0)), r: p.r(0.0105) * nk }, sm(0.01), M_SKIN, head));
+    sdf.add(Prim::new(Shape::Sphere { c: p.v(0.0, 1.5342, 0.0935 + 0.004 * (nk - 1.0)), r: p.r(0.008) * nk }, sm(0.008), M_SKIN, head));
     for side in 0..2 {
         let s = sx(side);
-        sdf.add(Prim::new(Shape::Sphere { c: p.v(0.0115 * s * nk, 1.5305, 0.084), r: p.r(0.0078) * nk }, sm(0.008), M_SKIN, head));
-        sdf.add(Prim::new(Shape::Sphere { c: p.v(0.0066 * s, 1.5228, 0.0878), r: p.r(0.0025) }, Op::Subtract(p.r(0.003)), M_SKIN, head));
+        sdf.add(Prim::new(Shape::Sphere { c: p.v(0.0094 * s * nk, 1.5305, 0.0858), r: p.r(0.0056) * nk }, sm(0.0065), M_SKIN, head));
+        sdf.add(Prim::new(
+            ell(p.v(0.0058 * s, 1.5238, 0.0888), Vec3::new(p.r(0.0028), p.r(0.0017), p.r(0.0034)), Quat::from_rotation_y(0.5 * s)),
+            Op::Subtract(p.r(0.0025)),
+            M_SKIN,
+            head,
+        ));
     }
     // lips volume (the animated mouth overlay sits on top)
     let lip_full = 1.0 + fem * 0.12;
@@ -685,12 +737,21 @@ pub fn head_sdf(a: &Appearance) -> Sdf {
         M_SKIN,
         head,
     ));
-    // eye openings (almond)
+    // eye sockets: a shallow carve just outside the lid shells, wider than tall so the
+    // corners of the eye stay visible
     for side in 0..2 {
         let s = sx(side);
+        let c = eye_center(s);
+        let er = EYE_R * super::face::LID_SCALE;
+        // The carve stays inside the lid shell (radius `er`), so its rim is always hidden
+        // behind the lids; the wide soft blend makes the surrounding skin dip toward the eye.
         sdf.add(Prim::new(
-            ell(p.v(0.031 * s, 1.5585, 0.0815), Vec3::new(p.r(0.0158 + 0.0006 * fem), p.r(0.0088 + 0.0006 * fem), p.r(0.0095)), Quat::from_rotation_z(0.06 * s)),
-            Op::Subtract(p.r(0.0045)),
+            ell(
+                p.v(c.x + 0.001 * s, c.y + er * 0.05, c.z),
+                Vec3::new(p.r(er * 1.3), p.r(er * 0.66), p.r(er * 1.2)),
+                Quat::from_rotation_y(super::face::EYE_YAW * s) * Quat::from_rotation_z(0.07 * s),
+            ),
+            Op::Subtract(p.r(0.004)),
             M_SKIN,
             head,
         ));
@@ -698,72 +759,117 @@ pub fn head_sdf(a: &Appearance) -> Sdf {
     sdf
 }
 
+/// Eyeball radius and centre in unscaled head units.
+const EYE_R: f32 = 0.0122;
+fn eye_center(s: f32) -> Vec3 {
+    Vec3::new(0.0312 * s, 1.5588, 0.0702)
+}
+
 pub fn hand_sdf(a: &Appearance, sk: &Skeleton, side: usize) -> Sdf {
     let p = P::body(a.height / 1.65);
-    let hk = 1.0 + a.masc * 0.1;
     let mut sdf = Sdf::new();
     let wrist = sk.bind[HAND[side]];
-    let elbow = sk.bind[FOREARM[side]];
-    let f = (wrist - elbow).normalize();
-    let n = f.cross(Vec3::Z).normalize() * sx(side);
-    let t = (Vec3::Z - f * Vec3::Z.dot(f) - n * Vec3::Z.dot(n)).normalize();
+    let hf = hand_frame(side);
+    let (f, t, n) = (hf.f, hf.t, hf.n);
     let hd = HAND[side] as u8;
-    let fg = FINGERS[side] as u8;
     let fa = FOREARM[side] as u8;
-    let r = |x: f32| p.r(x) * hk;
-    // wrist stub (inside the forearm)
+    // hand-space helpers: lengths scale with the body and the build's hand size
+    let hs = p.k * sk.hand_scale;
+    let r = |x: f32| x * hs;
+    let at = |ff: f32, tt: f32, nn: f32| wrist + (f * ff + t * tt + n * nn) * hs;
+    // wrist (slightly flattened, runs inside the forearm / cuff)
     sdf.add(Prim::new(
-        cone(wrist - f * p.r(0.035), wrist + f * p.r(0.018), r(0.023), r(0.021)),
+        cone(wrist - f * p.r(0.035), wrist + f * r(0.02), r(0.0235), r(0.0225)),
         Op::Union,
         M_SKIN,
         BoneSpec::blend(fa, hd, wrist - f * p.r(0.035), wrist + f * p.r(0.01), 0.3, 1.0),
     ));
-    // palm
-    let y_axis = f.cross(t);
-    let rot = Quat::from_mat3(&Mat3::from_cols(t, y_axis, f));
+    // palm: a rounded slab, wider at the knuckles than at the wrist
+    let rot = Quat::from_mat3(&Mat3::from_cols(t, f.cross(t), f));
     sdf.add(Prim::new(
-        rbox(wrist + f * r(0.05) - n * p.r(0.001), Vec3::new(r(0.039), r(0.0115), r(0.044)), r(0.011), rot),
-        Op::Smooth(p.r(0.012)),
+        rbox(at(0.05, 0.001, -0.0015), Vec3::new(r(0.036), r(0.0105), r(0.041)), r(0.0105), rot),
+        Op::Smooth(r(0.012)),
         M_SKIN,
         BoneSpec::single(hd),
     ));
-    // thenar
+    // knuckle ridge on the back of the hand
     sdf.add(Prim::new(
-        ell(wrist + f * r(0.035) + t * r(0.022) + n * r(0.006), Vec3::new(r(0.017), r(0.012), r(0.03)), rot),
-        Op::Smooth(p.r(0.01)),
+        Shape::Capsule { a: at(0.088, 0.027, -0.004), b: at(0.081, -0.026, -0.004), r: r(0.0088) },
+        Op::Smooth(r(0.01)),
         M_SKIN,
         BoneSpec::single(hd),
     ));
-    // fingers
-    let offs = [0.027, 0.009, -0.009, -0.026];
-    let lens = [0.074, 0.081, 0.076, 0.061];
+    // heel pads: thenar (thumb side) and hypothenar (little-finger side)
+    sdf.add(Prim::new(
+        ell(at(0.034, 0.02, 0.0065), Vec3::new(r(0.0165), r(0.011), r(0.028)), rot * Quat::from_rotation_y(-0.35 * sx(side))),
+        Op::Smooth(r(0.01)),
+        M_SKIN,
+        BoneSpec::blend(hd, THUMB[side] as u8, at(0.0, 0.01, 0.0), at(0.03, 0.03, 0.0), 0.4, 1.3),
+    ));
+    sdf.add(Prim::new(
+        ell(at(0.036, -0.024, 0.004), Vec3::new(r(0.012), r(0.01), r(0.03)), rot),
+        Op::Smooth(r(0.01)),
+        M_SKIN,
+        BoneSpec::single(hd),
+    ));
+    // fingers: three phalanges each, gently curved toward the palm even at rest
+    let (p1, p2) = hand::PHALANX;
     for i in 0..4 {
-        let kn = wrist + f * r(0.092) + t * r(offs[i]) - n * p.r(0.002);
-        let spread = t * r(offs[i]) * 0.12;
-        let l = r(lens[i]);
-        let m1 = kn + (f + spread) * l * 0.55 + n * p.r(0.006);
-        let tip = m1 + (f + spread * 1.5) * l * 0.45 + n * p.r(0.013);
-        let rr = r(0.0084) * if i == 3 { 0.88 } else { 1.0 };
+        let (kf, kt) = hand::KNUCKLE[i];
+        let len = hand::LENGTH[i];
+        let (prox, dist) = if i == 0 { (INDEX[side] as u8, INDEX2[side] as u8) } else { (FINGERS[side] as u8, FINGERS2[side] as u8) };
+        // slight fan: fingers converge a little toward the middle finger tip
+        let fan = -kt * 0.06;
+        let kn = at(kf, kt, -0.001);
+        let pip = at(kf + len * p1, kt + fan * p1, 0.0015);
+        let dip = at(kf + len * (p1 + p2), kt + fan * (p1 + p2), 0.0045);
+        let tip = at(kf + len - 0.006, kt + fan, 0.008);
+        let rr = r(if i == 3 { 0.0072 } else { 0.0082 });
+        // web between palm and finger
         sdf.add(Prim::new(
-            Shape::Sphere { c: kn, r: rr * 1.08 },
-            Op::Smooth(p.r(0.008)),
+            Shape::Sphere { c: kn, r: rr * 1.1 },
+            Op::Smooth(r(0.007)),
             M_SKIN,
-            BoneSpec::blend(hd, fg, wrist, kn, 0.85, 1.1),
+            BoneSpec::blend(hd, prox, at(kf - 0.03, kt, 0.0), kn, 0.75, 1.25),
         ));
         sdf.add(Prim::new(
-            cone(kn, m1, rr, rr * 0.93),
-            Op::Smooth(p.r(0.005)),
+            cone(kn, pip, rr * 1.02, rr * 0.95),
+            Op::Smooth(r(0.004)),
             M_SKIN,
-            BoneSpec::blend(hd, fg, wrist, kn, 0.9, 1.05),
+            BoneSpec::blend(hd, prox, at(kf - 0.03, kt, 0.0), kn, 0.82, 1.18),
         ));
-        sdf.add(Prim::new(cone(m1, tip, rr * 0.93, rr * 0.8), Op::Smooth(p.r(0.004)), M_SKIN, BoneSpec::single(fg)));
+        sdf.add(Prim::new(
+            cone(pip, dip, rr * 0.96, rr * 0.88),
+            Op::Smooth(r(0.003)),
+            M_SKIN,
+            BoneSpec::blend(prox, dist, kn, pip, 0.8, 1.2),
+        ));
+        sdf.add(Prim::new(cone(dip, tip, rr * 0.88, rr * 0.78), Op::Smooth(r(0.003)), M_SKIN, BoneSpec::single(dist)));
     }
-    // thumb
-    let tb = wrist + f * r(0.022) + t * r(0.03) + n * r(0.008);
-    let tm = tb + f * r(0.033) + t * r(0.022) + n * r(0.012);
-    let tt = tm + f * r(0.028) + t * r(0.008) + n * r(0.014);
-    sdf.add(Prim::new(cone(tb, tm, r(0.0118), r(0.0102)), Op::Smooth(p.r(0.01)), M_SKIN, BoneSpec::single(hd)));
-    sdf.add(Prim::new(cone(tm, tt, r(0.0102), r(0.0086)), Op::Smooth(p.r(0.004)), M_SKIN, BoneSpec::single(hd)));
+    // thumb: metacarpal (in the thenar), two phalanges
+    let th = THUMB[side] as u8;
+    let th2 = THUMB2[side] as u8;
+    let tb = hand::THUMB_BASE;
+    let td = Vec3::new(hand::THUMB_DIR.0, hand::THUMB_DIR.1, hand::THUMB_DIR.2).normalize();
+    let td2 = Vec3::new(hand::THUMB_DIR2.0, hand::THUMB_DIR2.1, hand::THUMB_DIR2.2).normalize();
+    let (l0, l1, l2) = hand::THUMB_LEN;
+    let mc = Vec3::new(tb.0, tb.1, tb.2) + td * l0;
+    let along = |d: f32| {
+        let q = mc + td2 * d;
+        at(q.x, q.y, q.z)
+    };
+    let cmc = at(tb.0, tb.1, tb.2);
+    let mcp = along(0.0);
+    let ip = along(l1);
+    let tt = along(l1 + l2 - 0.007);
+    sdf.add(Prim::new(
+        cone(cmc, mcp, r(0.0125), r(0.0108)),
+        Op::Smooth(r(0.01)),
+        M_SKIN,
+        BoneSpec::blend(hd, th, at(tb.0 - 0.02, tb.1 - 0.012, tb.2), cmc, 0.7, 1.4),
+    ));
+    sdf.add(Prim::new(cone(mcp, ip, r(0.0104), r(0.0096)), Op::Smooth(r(0.004)), M_SKIN, BoneSpec::blend(th, th2, cmc, mcp, 0.82, 1.18)));
+    sdf.add(Prim::new(cone(ip, tt, r(0.0098), r(0.0086)), Op::Smooth(r(0.003)), M_SKIN, BoneSpec::single(th2)));
     sdf
 }
 
@@ -772,7 +878,7 @@ pub fn hair_sdf(a: &Appearance) -> Sdf {
     let mut sdf = Sdf::new();
     let head = BoneSpec::single(HEAD as u8);
     let cr_c = p.v(0.0, 1.575, -0.014);
-    let cr_r = Vec3::new(p.r(0.073), p.r(0.082), p.r(0.094));
+    let cr_r = Vec3::new(p.r(0.0705), p.r(0.082), p.r(0.094));
     let cap = |extra: f32| ell(cr_c + Vec3::new(0.0, extra * 0.4, -extra * 0.3), cr_r + Vec3::splat(extra), Quat::IDENTITY);
     let face_cut = |sdf: &mut Sdf, top: f32| {
         sdf.add(Prim::new(
@@ -786,7 +892,7 @@ pub fn hair_sdf(a: &Appearance) -> Sdf {
         for side in 0..2 {
             let s = sx(side);
             sdf.add(Prim::new(
-                ell(p.v(0.078 * s, 1.535, 0.008), Vec3::new(p.r(0.03), p.r(0.047), p.r(0.036)), Quat::IDENTITY),
+                ell(p.v(0.0755 * s, 1.535, 0.013), Vec3::new(p.r(0.029), p.r(0.045), p.r(0.039)), Quat::IDENTITY),
                 Op::Subtract(p.r(0.01)),
                 M_HAIR,
                 head,
@@ -807,11 +913,11 @@ pub fn hair_sdf(a: &Appearance) -> Sdf {
     );
     match a.hair {
         Hair::Ponytail => {
-            sdf.add(Prim::new(cap(p.r(0.008)), Op::Union, M_HAIR, head).with_grooves(p.r(0.0011), 55.0, cr_c - Vec3::Y * p.r(0.02)));
-            face_cut(&mut sdf, 1.612);
+            sdf.add(Prim::new(cap(p.r(0.008)), Op::Union, M_HAIR, head).with_grooves(p.r(0.00055), 64.0, cr_c - Vec3::Y * p.r(0.02)));
+            face_cut(&mut sdf, 1.604);
             ear_cut(&mut sdf);
             // soft volume on top and a centre parting
-            sdf.add(Prim::new(ell(p.v(0.0, 1.625, 0.0), Vec3::new(p.r(0.066), p.r(0.04), p.r(0.08)), Quat::IDENTITY), Op::Smooth(p.r(0.02)), M_HAIR, head).with_grooves(p.r(0.0009), 55.0, cr_c - Vec3::Y * p.r(0.02)));
+            sdf.add(Prim::new(ell(p.v(0.0, 1.627, 0.004), Vec3::new(p.r(0.066), p.r(0.041), p.r(0.082)), Quat::IDENTITY), Op::Smooth(p.r(0.02)), M_HAIR, head).with_grooves(p.r(0.0005), 64.0, cr_c - Vec3::Y * p.r(0.02)));
             sdf.add(Prim::new(
                 Shape::Capsule {
                     a: p.v(0.004, 1.676, 0.06),
@@ -846,16 +952,16 @@ pub fn hair_sdf(a: &Appearance) -> Sdf {
             ear_cut(&mut sdf);
         }
         Hair::Bob => {
-            sdf.add(Prim::new(cap(p.r(0.01)), Op::Union, M_HAIR, head).with_falling(p.r(0.0012), 70.0, cr_c));
+            sdf.add(Prim::new(cap(p.r(0.01)), Op::Union, M_HAIR, head).with_falling(p.r(0.0007), 70.0, cr_c));
             sdf.add(
                 Prim::new(
-                    ell(p.v(0.0, 1.548, -0.016), Vec3::new(p.r(0.09), p.r(0.105), p.r(0.105)), Quat::IDENTITY),
+                    ell(p.v(0.0, 1.548, -0.016), Vec3::new(p.r(0.088), p.r(0.105), p.r(0.105)), Quat::IDENTITY),
                     Op::Smooth(p.r(0.02)),
                     M_HAIR,
                     BoneSpec::blend(HEAD as u8, HAIR as u8, p.v(0.0, 1.58, 0.0), p.v(0.0, 1.47, 0.0), 0.0, 1.0),
                 )
                 .clip(Vec3::NEG_Y, -p.v(0.0, 1.468, 0.0).y)
-                .with_falling(p.r(0.0014), 70.0, cr_c),
+                .with_falling(p.r(0.0008), 70.0, cr_c),
             );
             face_cut(&mut sdf, 1.585);
             sdf.add(
@@ -865,8 +971,8 @@ pub fn hair_sdf(a: &Appearance) -> Sdf {
                     M_HAIR,
                     head,
                 )
-                .clip(Vec3::NEG_Y, -p.v(0.0, 1.59, 0.0).y)
-                .with_falling(p.r(0.001), 70.0, cr_c),
+                .clip(Vec3::NEG_Y, -p.v(0.0, 1.5915, 0.0).y)
+                .with_falling(p.r(0.0004), 70.0, cr_c),
             );
         }
         Hair::Bun => {
@@ -881,7 +987,7 @@ pub fn hair_sdf(a: &Appearance) -> Sdf {
             ear_cut(&mut sdf);
         }
         Hair::Long => {
-            sdf.add(Prim::new(cap(p.r(0.01)), Op::Union, M_HAIR, head).with_falling(p.r(0.0012), 70.0, cr_c));
+            sdf.add(Prim::new(cap(p.r(0.01)), Op::Union, M_HAIR, head).with_falling(p.r(0.0007), 70.0, cr_c));
             let sway = BoneSpec::blend(HEAD as u8, HAIR as u8, p.v(0.0, 1.56, 0.0), p.v(0.0, 1.3, 0.0), 0.0, 1.0);
             sdf.add(
                 Prim::new(
@@ -891,7 +997,7 @@ pub fn hair_sdf(a: &Appearance) -> Sdf {
                     sway,
                 )
                 .clip(Vec3::NEG_Y, -p.v(0.0, 1.3, 0.0).y)
-                .with_falling(p.r(0.0016), 70.0, cr_c),
+                .with_falling(p.r(0.0009), 70.0, cr_c),
             );
             face_cut(&mut sdf, 1.605);
             // keep the neck and shoulders free
@@ -911,11 +1017,11 @@ pub fn hair_sdf(a: &Appearance) -> Sdf {
     }
     if a.mustache {
         sdf.add(Prim::new(
-            ell(p.v(0.0, 1.508, 0.097), Vec3::new(p.r(0.023), p.r(0.0055), p.r(0.008)), Quat::IDENTITY),
+            ell(p.v(0.0, 1.5115, 0.084), Vec3::new(p.r(0.021), p.r(0.0052), p.r(0.0062)), Quat::IDENTITY),
             Op::Union,
             M_HAIR,
             head,
-        ).with_disp(p.r(0.0008), 400.0));
+        ).with_disp(p.r(0.0006), 400.0));
     }
     if a.glasses {
         for side in 0..2 {
@@ -1050,6 +1156,56 @@ fn to_skin(mesh: &MeshOut, sdf: &Sdf, mats: &[Mat], sigma: f32, ao_scale: f32, a
     out
 }
 
+/// Paints subtle colour zones into the face skin (blush, warm nose and ears, depth around
+/// the eyes, lip base, beard shadow) so it stops reading as one flat plastic tone.
+fn tint_face(mesh: &mut SkinMeshData, a: &Appearance, k: f32, mats: &[Mat]) {
+    let hs = HEAD_SCALE;
+    let fem = 1.0 - a.masc;
+    let young = 1.0 - ((a.age - 1.0).max(0.0) * 0.6).min(0.6);
+    let lower = 0.0045 * fem + 0.003 * (1.0 - a.age.min(1.0));
+    let lip = mats[M_LIP as usize].color;
+    let g = |d2: f32, r: f32| (-d2 / (r * r)).exp();
+    for v in &mut mesh.verts {
+        let ux = v.pos[0] / (k * hs);
+        let uy = (v.pos[1] / k - HEAD_PIVOT) / hs + HEAD_PIVOT;
+        let uz = v.pos[2] / (k * hs);
+        if uy < 1.455 {
+            continue;
+        }
+        let ax = ux.abs();
+        let mut c = [v.color[0] as f32, v.color[1] as f32, v.color[2] as f32];
+        let mul = |c: &mut [f32; 3], m: [f32; 3], w: f32| {
+            for i in 0..3 {
+                c[i] *= 1.0 + (m[i] - 1.0) * w;
+            }
+        };
+        // blush on the apples of the cheeks
+        let d2 = (ax - 0.037).powi(2) + (uy - 1.532).powi(2) * 1.4 + (uz - 0.06).powi(2) * 0.5;
+        mul(&mut c, [1.04, 0.9, 0.9], g(d2, 0.019) * (0.55 + 0.45 * fem) * young);
+        // nose tip and wings
+        let d2 = ux * ux + (uy - 1.533).powi(2) + (uz - 0.095).powi(2);
+        mul(&mut c, [1.03, 0.91, 0.9], g(d2, 0.012) * 0.7);
+        // ears
+        mul(&mut c, [1.03, 0.9, 0.89], smoothstep(0.066, 0.075, ax) * smoothstep(0.03, 0.0, uz) * 0.8);
+        // depth around the eyes
+        let d2 = (ax - 0.0312).powi(2) + (uy - 1.561).powi(2) * 2.2 + (uz - 0.078).powi(2) * 0.6;
+        mul(&mut c, [0.95, 0.9, 0.9], g(d2, 0.0165) * 0.7);
+        // beard shadow
+        if a.masc > 0.5 && a.age >= 1.0 {
+            let w = smoothstep(1.527, 1.508, uy) * smoothstep(-0.015, 0.03, uz) * smoothstep(1.462, 1.475, uy);
+            let upper_lip = g(ux * ux + (uy - 1.513).powi(2) * 6.0, 0.02) * smoothstep(0.07, 0.085, uz);
+            mul(&mut c, [0.84, 0.86, 0.9], (w.max(upper_lip) * a.masc * 0.55).min(1.0));
+        }
+        // lip base under the animated mouth
+        let d2 = (ux / 0.0185).powi(2) + ((uy - (1.5005 + lower * 0.6)) / 0.0085).powi(2);
+        let w = smoothstep(1.0, 0.55, d2) * smoothstep(0.065, 0.078, uz);
+        for i in 0..3 {
+            c[i] += (lip[i] as f32 - c[i]) * w * 0.85;
+            v.color[i] = c[i].clamp(0.0, 255.0) as u8;
+        }
+    }
+}
+
 fn append_skin(dst: &mut SkinMeshData, src: &SkinMeshData) {
     let base = dst.verts.len() as u32;
     dst.verts.extend_from_slice(&src.verts);
@@ -1073,8 +1229,8 @@ pub fn build(a: &Appearance, sk: &Skeleton, q: Quality) -> CharacterMeshes {
     let k = a.height / 1.65;
     let mats = materials(a);
     let (c_body, c_head, c_hand, c_hair) = match q {
-        Quality::High => (0.0072, 0.0027, 0.0028, 0.0036),
-        Quality::Low => (0.0095, 0.0036, 0.0036, 0.0046),
+        Quality::High => (0.0072, 0.003, 0.003, 0.0039),
+        Quality::Low => (0.0095, 0.004, 0.0038, 0.005),
     };
     let mut skin = SkinMeshData::default();
     let t0 = web_time::Instant::now();
@@ -1087,8 +1243,12 @@ pub fn build(a: &Appearance, sk: &Skeleton, q: Quality) -> CharacterMeshes {
     let hem_y = 1.0 * k;
     let is_skirt = a.bottom == Bottom::Skirt;
     let adjust_body = move |p: Vec3, mat: u8, w: &mut [(u8, f32); 4]| {
-        // loose clothing sways with the hem bone
-        let loose = if mat == M_TOP || mat == M_TOP2 {
+        // loose clothing sways with the hem bone (never the sleeves: cuffs hang at hem
+        // height in the bind pose but must follow the arms)
+        let on_arm = w.iter().any(|e| e.1 > 0.15 && ((CLAV_L..=FINGERS_R).contains(&(e.0 as usize)) || e.0 as usize > HEM));
+        let loose = if on_arm {
+            0.0
+        } else if mat == M_TOP || mat == M_TOP2 {
             smoothstep(hem_y, hem_y - 0.12 * k, p.y) * 0.5
         } else if is_skirt && mat == M_BOTTOM {
             0.0
@@ -1112,10 +1272,12 @@ pub fn build(a: &Appearance, sk: &Skeleton, q: Quality) -> CharacterMeshes {
 
     // head
     let hs = head_sdf(a);
-    let hlo = Vec3::new(-0.115, 1.395, -0.135) * k;
+    let hlo = Vec3::new(-0.115, 1.4, -0.14) * k;
     let hhi = Vec3::new(0.115, 1.7, 0.145) * k;
     let hm = surface_nets(&hs, hlo, hhi, c_head * k);
-    append_skin(&mut skin, &to_skin(&hm, &hs, &mats, 0.01 * k, k * 0.6, &|_, _, _| {}));
+    let mut head_mesh = to_skin(&hm, &hs, &mats, 0.01 * k, k * 0.6, &|_, _, _| {});
+    tint_face(&mut head_mesh, a, k, &mats);
+    append_skin(&mut skin, &head_mesh);
     let t_head = t0.elapsed().as_secs_f32();
 
     // hands
@@ -1133,9 +1295,9 @@ pub fn build(a: &Appearance, sk: &Skeleton, q: Quality) -> CharacterMeshes {
     let t_hands = t0.elapsed().as_secs_f32();
     // hair
     let hair = hair_sdf(a);
-    let ylo = if a.hair == Hair::Long { 1.26 } else { 1.42 };
+    let ylo = if a.hair == Hair::Long { 1.23 } else { 1.42 };
     let hrlo = Vec3::new(-0.14, ylo, -0.21) * k;
-    let hrhi = Vec3::new(0.14, 1.75, 0.16) * k;
+    let hrhi = Vec3::new(0.14, 1.76, 0.16) * k;
     let hrm = surface_nets(&hair, hrlo, hrhi, c_hair * k);
     let long = matches!(a.hair, Hair::Long | Hair::Bob);
     let adjust_hair = move |p: Vec3, _mat: u8, w: &mut [(u8, f32); 4]| {
@@ -1169,14 +1331,18 @@ pub fn build(a: &Appearance, sk: &Skeleton, q: Quality) -> CharacterMeshes {
     let hp = P::head(k);
     let head_b = sk.bind[HEAD];
     let mut face = FaceLayout {
-        eye_r: hp.r(0.0122),
+        eye_r: hp.r(EYE_R),
         ..Default::default()
     };
     for side in 0..2 {
         let s = sx(side);
-        face.eye[side] = hp.v(0.031 * s, 1.559, 0.0655) - head_b;
-        let brow_y = [1.5785f32, 1.5815, 1.5815, 1.5785];
-        for (i, x) in [0.012f32, 0.024, 0.036, 0.046].iter().enumerate() {
+        let ec = eye_center(s);
+        face.eye[side] = hp.v(ec.x, ec.y, ec.z) - head_b;
+        // brow arc: starts low near the nose, peaks at two thirds, short descending tail
+        let arch = 1.0 - a.masc * 0.55;
+        let drop = a.masc * 0.0012;
+        let brow_y = [1.5802f32 - drop, 1.5816 - drop + 0.0008 * arch, 1.5822 - drop + 0.0016 * arch, 1.5792 - drop + 0.0004 * arch];
+        for (i, x) in [0.0118f32, 0.0235, 0.0365, 0.0475].iter().enumerate() {
             let q = hp.v(x * s, brow_y[i], 0.0);
             let z = surface_z(&hs, q.x, q.y, 0.25 * k);
             face.brow[side][i] = Vec3::new(q.x, q.y, z) - head_b;
@@ -1195,6 +1361,60 @@ pub fn build(a: &Appearance, sk: &Skeleton, q: Quality) -> CharacterMeshes {
     face.head_center = hp.v(0.0, 1.56, 0.0) - head_b;
 
     CharacterMeshes { skin, face, mats }
+}
+
+#[cfg(test)]
+mod probe {
+    use super::*;
+    #[test]
+    /// Everything near a hand must be skinned to that arm only: a stray weight on a body
+    /// bone (the hem, the other arm) tears the mesh as soon as the arm leaves the hip.
+    fn hands_follow_their_arm() {
+        assert!(BONE_COUNT <= crate::gfx::renderer::MAX_BONES);
+        let a = Appearance::sofia();
+        let sk = Skeleton::new(a.height, 1.0, 1.05);
+        let m = build(&a, &sk, Quality::Low);
+        for side in 0..2 {
+            let wrist = sk.bind[HAND[side]];
+            let f = hand_frame(side).f;
+            let allowed = [FOREARM[side], HAND[side], FINGERS[side], FINGERS2[side], INDEX[side], INDEX2[side], THUMB[side], THUMB2[side]];
+            let mut seen = 0;
+            for v in &m.skin.verts {
+                let p = Vec3::from(v.pos);
+                // the hand itself and the cuff around the wrist
+                let along = (p - wrist).dot(f);
+                if p.distance(wrist + f * 0.08) < 0.11 && along > -0.03 {
+                    seen += 1;
+                    for k in 0..4 {
+                        if v.weights[k] > 8 {
+                            assert!(allowed.contains(&(v.joints[k] as usize)), "side {side}: bone {} weight {} at {p:?}", v.joints[k], v.weights[k]);
+                        }
+                    }
+                }
+            }
+            assert!(seen > 500, "hand mesh missing on side {side}");
+        }
+    }
+
+    #[test]
+    /// A relaxed hand hangs with gently curled fingers and the thumb beside the index
+    /// (no claw): every digit stays within ~60 degrees of the hand direction.
+    fn relaxed_hand_is_not_a_claw() {
+        let a = Appearance::sofia();
+        let sk = Skeleton::new(a.height, 1.0, 1.05);
+        let mut an = crate::character::anim::Animator::new(sk.clone(), Vec3::ZERO, 0.0, 1);
+        for _ in 0..120 {
+            an.update(1.0 / 60.0);
+        }
+        for side in 0..2 {
+            let hf = hand_frame(side);
+            let f = an.fk.rot[HAND[side]] * hf.f;
+            for (bone, dir) in [(FINGERS2[side], hf.f), (INDEX2[side], hf.f), (THUMB2[side], sk.bone_dir(THUMB2[side]))] {
+                let d = an.fk.rot[bone] * dir;
+                assert!(d.dot(f) > 0.5, "side {side} bone {bone}: {d:?} vs hand {f:?}");
+            }
+        }
+    }
 }
 
 #[cfg(test)]
