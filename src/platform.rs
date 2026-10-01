@@ -33,6 +33,44 @@ pub fn hide_loading() {
     }
 }
 
+/// Shows a status line on the web loading screen.
+#[cfg(target_arch = "wasm32")]
+pub fn set_loading_status(text: &str) {
+    if let Some(el) = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.get_element_by_id("status"))
+    {
+        el.set_text_content(Some(text));
+    }
+}
+
+/// Phones and tablets: touch-first devices with small or dense screens.
+/// `?quality=low|high` in the URL overrides the detection.
+pub fn is_mobile_device() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let q = url_query();
+        if q.contains("quality=low") || q.contains("mobile=1") {
+            return true;
+        }
+        if q.contains("quality=high") || q.contains("mobile=0") {
+            return false;
+        }
+        let Some(win) = web_sys::window() else { return false };
+        let nav = win.navigator();
+        let ua = nav.user_agent().unwrap_or_default();
+        let touch = nav.max_touch_points() > 0;
+        let mobile_ua = ["Android", "iPhone", "iPad", "iPod", "Mobile", "Silk", "Kindle"].iter().any(|k| ua.contains(k));
+        // iPadOS reports a desktop Safari user agent
+        let ipad = ua.contains("Macintosh") && nav.max_touch_points() > 1;
+        mobile_ua || ipad || (touch && win.inner_width().ok().and_then(|v| v.as_f64()).unwrap_or(2000.0) < 1100.0)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        cfg!(any(target_os = "android", target_os = "ios"))
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 pub fn url_query() -> String {
     web_sys::window()

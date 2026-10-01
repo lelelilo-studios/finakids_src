@@ -10,7 +10,7 @@ if command -v wasm-opt >/dev/null 2>&1; then
   wasm-opt -O2 --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals \
     "$OUT/pkg/finakids_bg.wasm" -o "$OUT/pkg/finakids_bg.wasm" || echo "wasm-opt failed, keeping unoptimized wasm"
 fi
-cp web/index.html web/manifest.webmanifest "$OUT/"
+cp web/index.html web/worker.js web/manifest.webmanifest "$OUT/"
 cp -r web/icons "$OUT/"
 touch "$OUT/.nojekyll"
 ls -la "$OUT" "$OUT/pkg"

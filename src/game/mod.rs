@@ -18,6 +18,7 @@ pub use config::GameConfig;
 use crate::character::actions as acts;
 use crate::character::appearance::Appearance;
 use crate::character::build::Quality;
+use crate::character::factory::{self, CharFactory};
 use crate::character::{Character, HeldProp, SharedCharMeshes};
 use crate::gfx::renderer::{FrameScene, Light};
 use crate::gfx::{Draw, DrawPass, Gpu, Renderer};
@@ -152,6 +153,7 @@ pub enum UiAct {
     Mini(minigame::MiniAct),
     AutoSave(u32),
     StartGame(bool),
+    Pause,
     Resume,
     Quit,
     Interact,
@@ -220,7 +222,9 @@ pub struct State {
     pub debug: bool,
     pub rng: Rng,
     pub npcs: Vec<Npc>,
-    pub build_queue: Vec<(&'static str, Appearance, Loc, &'static str)>,
+    /// Characters still being built in the background.
+    pub build_queue: Vec<PendingChar>,
+    pub build_total: usize,
     pub quality: Quality,
     pub flash: f32,
     pub has_save: bool,
@@ -335,6 +339,7 @@ impl State {
             None
         };
         self.cam.set_limits(lim);
+        self.cam.set_area(self.locs[li].cam_area);
         self.cam.reset_to(&rig, p + Vec3::Y * rig.look_height);
         self.pending = None;
     }
@@ -481,10 +486,30 @@ pub fn contact_name(from: &str) -> &'static str {
 
 // ------------------------------------------------------------------ Game
 
+pub struct PendingChar {
+    pub id: &'static str,
+    pub app: Appearance,
+    pub loc: Loc,
+    pub spawn: &'static str,
+    pub ticket: u32,
+}
+
+/// Build key used by the character factory for a cast member.
+fn app_key(id: &str) -> String {
+    match id {
+        "npc_a" => "random:11".into(),
+        "npc_b" => "random:4".into(),
+        other => other.to_string(),
+    }
+}
+
 pub struct Game {
     pub ui: Ui,
     pub s: State,
     shared: SharedCharMeshes,
+    factory: CharFactory,
+    /// Debug / autostart work deferred until every character is built.
+    deferred_start: bool,
     ui_acts: Vec<UiAct>,
     pending_input: UiInput,
     world_tap: Option<Vec2>,
@@ -492,20 +517,40 @@ pub struct Game {
     bot: Option<bot::Bot>,
 }
 
-fn make_character(gpu: &Gpu, r: &mut Renderer, id: &'static str, app: Appearance, loc: &Location, spawn: &str, q: Quality) -> Character {
-    let (p, yaw) = loc.spawn(spawn);
-    Character::new(gpu, r, id, app, p, yaw, q)
-}
 
 impl Game {
     pub fn new(gpu: &Gpu, r: &mut Renderer, cfg: GameConfig) -> Game {
         let t0 = web_time::Instant::now();
         let locs = vec![world::build_bedroom(gpu, r), world::build_home(gpu, r), world::build_plaza(gpu, r)];
         log::info!("world built in {:.2}s", t0.elapsed().as_secs_f32());
-        let quality = if gpu.info.is_webgl || gpu.info.is_mobile || cfg!(target_arch = "wasm32") { Quality::Low } else { Quality::High };
-        let t1 = web_time::Instant::now();
-        let chars = vec![make_character(gpu, r, "sofia", Appearance::sofia(), &locs[0], "start", quality)];
-        log::info!("player built in {:.2}s", t1.elapsed().as_secs_f32());
+        let quality = match cfg.quality.as_deref() {
+            Some("high") => Quality::High,
+            Some("low") => Quality::Low,
+            Some("mobile") => Quality::Mobile,
+            _ if gpu.info.is_mobile => Quality::Mobile,
+            _ if gpu.info.is_webgl || cfg!(target_arch = "wasm32") => Quality::Low,
+            _ => Quality::High,
+        };
+        // every character is built in the background, the player first
+        let mut factory = CharFactory::new();
+        let roster: [(&'static str, Appearance, Loc, &'static str); 7] = [
+            ("sofia", Appearance::sofia(), Loc::Bedroom, "start"),
+            ("mama", Appearance::mama(), Loc::Home, "mom"),
+            ("tomas", Appearance::tomas(), Loc::Plaza, "tomas"),
+            ("vale", Appearance::vale(), Loc::Plaza, "vale"),
+            ("julio", Appearance::don_julio(), Loc::Plaza, "julio"),
+            ("npc_a", Appearance::random(11), Loc::Plaza, "fountain"),
+            ("npc_b", Appearance::random(4), Loc::Plaza, "fountain"),
+        ];
+        let build_queue: Vec<PendingChar> = roster
+            .into_iter()
+            .map(|(id, app, loc, spawn)| {
+                let q = if id.starts_with("npc") && quality == Quality::High { Quality::Low } else { quality };
+                let ticket = factory.request(&format!("{}:{}", app_key(id), factory::quality_key(q)));
+                PendingChar { id, app, loc, spawn, ticket }
+            })
+            .collect();
+        let chars = Vec::new();
         let shared = SharedCharMeshes::new(gpu, r);
         let mut s = State {
             cfg: cfg.clone(),
@@ -517,7 +562,7 @@ impl Game {
             locs,
             cur: 0,
             chars,
-            char_loc: vec![Loc::Bedroom],
+            char_loc: Vec::new(),
             cam: CamCtl::new(),
             fin: Finance::new(),
             dir: Director::new(),
@@ -550,14 +595,8 @@ impl Game {
             debug: false,
             rng: Rng::new(7),
             npcs: Vec::new(),
-            build_queue: vec![
-                ("mama", Appearance::mama(), Loc::Home, "mom"),
-                ("tomas", Appearance::tomas(), Loc::Plaza, "tomas"),
-                ("vale", Appearance::vale(), Loc::Plaza, "vale"),
-                ("julio", Appearance::don_julio(), Loc::Plaza, "julio"),
-                ("npc_a", Appearance::random(11), Loc::Plaza, "fountain"),
-                ("npc_b", Appearance::random(4), Loc::Plaza, "fountain"),
-            ],
+            build_total: build_queue.len(),
+            build_queue,
             quality,
             flash: 0.0,
             has_save: false,
@@ -567,63 +606,86 @@ impl Game {
             loading: 0.0,
         };
         s.has_save = save::exists(&s);
-        story::setup_title(&mut s);
         let ui = Ui::new(r.atlas_size);
+        let deferred_start = cfg.autostart || cfg.scene.is_some() || cfg.beat.is_some() || cfg.cam.is_some();
         let mut g = Game {
             ui,
             s,
             shared,
+            factory,
+            deferred_start,
             ui_acts: Vec::new(),
             pending_input: UiInput::default(),
             world_tap: None,
             ui_hover: false,
             bot: if cfg.bot { Some(bot::Bot::new(&cfg.bot_policy)) } else { None },
         };
-        if g.s.cfg.autostart {
-            while !g.s.build_queue.is_empty() {
-                g.build_next(gpu, r);
+        // native debug starts and screenshots build everything up front
+        #[cfg(not(target_arch = "wasm32"))]
+        if g.deferred_start {
+            while let Some((ticket, m)) = g.factory.wait() {
+                g.add_built(gpu, r, ticket, m);
             }
-            g.start(false);
-        } else if g.s.cfg.scene.is_some() || g.s.cfg.beat.is_some() || g.s.cfg.cam.is_some() {
-            // debug start: build everyone now and jump in
-            while !g.s.build_queue.is_empty() {
-                g.build_next(gpu, r);
-            }
-            g.start(false);
-            g.s.dir = Director::new();
-            g.s.dialog = None;
-            g.s.choice = None;
-            g.s.title_card = None;
-            g.s.letterbox_target = 0.0;
-            if let Some(b) = g.s.cfg.beat.clone() {
-                story::debug_beat(&mut g.s, &b);
-            }
-            if let Some(sc) = g.s.cfg.scene.clone() {
-                if let Some(l) = Loc::from_str(&sc) {
-                    let spawn = if l == Loc::Plaza { "fountain" } else if l == Loc::Home { "hall" } else { "start" };
-                    g.s.goto(l, spawn);
-                }
-            }
-            if let Some(h) = g.s.cfg.hour {
-                g.s.hour = h;
-                g.s.hour_target = h;
-            }
-            g.s.fade = 0.0;
-            g.s.fade_target = 0.0;
         }
+        g.pump_builds(gpu, r);
         g
     }
 
-    fn build_next(&mut self, gpu: &Gpu, r: &mut Renderer) {
-        if self.s.build_queue.is_empty() {
-            return;
+    /// Surface pixels per logical pixel; keeps the UI legible on dense screens.
+    pub fn set_density(&mut self, d: f32) {
+        self.ui.density = self.s.cfg.density.unwrap_or(d).max(0.5);
+    }
+
+    /// True once the player exists and the title can be shown.
+    pub fn ready(&self) -> bool {
+        !self.s.chars.is_empty()
+    }
+
+    /// True while characters are still being built.
+    pub fn is_loading(&self) -> bool {
+        !self.s.build_queue.is_empty()
+    }
+
+    /// Loading progress in [0, 1].
+    pub fn load_progress(&self) -> f32 {
+        1.0 - self.s.build_queue.len() as f32 / self.s.build_total.max(1) as f32
+    }
+
+    /// Receives finished character builds and uploads them.
+    fn pump_builds(&mut self, gpu: &Gpu, r: &mut Renderer) {
+        // the synchronous fallback builds at most one per frame
+        let mut budget = 4;
+        while budget > 0 && !self.s.build_queue.is_empty() {
+            budget -= 1;
+            let Some((ticket, m)) = self.factory.poll() else { break };
+            self.add_built(gpu, r, ticket, m);
         }
-        let (id, app, loc, spawn) = self.s.build_queue.remove(0);
+        if self.deferred_start && self.s.build_queue.is_empty() && !self.s.chars.is_empty() {
+            self.deferred_start = false;
+            self.debug_start();
+        }
+    }
+
+    fn add_built(&mut self, gpu: &Gpu, r: &mut Renderer, ticket: u32, m: crate::character::build::CharacterMeshes) {
+        let Some(qi) = self.s.build_queue.iter().position(|p| p.ticket == ticket) else {
+            return;
+        };
+        let PendingChar { id, app, loc, spawn, .. } = self.s.build_queue.remove(qi);
         let li = self.s.locs.iter().position(|l| l.id == loc).unwrap_or(0);
-        let q = if id.starts_with("npc") { Quality::Low } else { self.s.quality };
-        let c = make_character(gpu, r, id, app, &self.s.locs[li], spawn, q);
-        self.s.chars.push(c);
-        self.s.char_loc.push(loc);
+        let (p, yaw) = self.s.locs[li].spawn(spawn);
+        let c = Character::from_meshes(gpu, r, id, app, m, p, yaw);
+        // the player is always chars[0]
+        if id == "sofia" {
+            self.s.chars.insert(0, c);
+            self.s.char_loc.insert(0, loc);
+            for n in &mut self.s.npcs {
+                n.char_idx += 1;
+            }
+            story::setup_title(&mut self.s);
+        } else {
+            self.s.chars.push(c);
+            self.s.char_loc.push(loc);
+        }
         if id.starts_with("npc") {
             let idx = self.s.chars.len() - 1;
             let pts = if id == "npc_a" {
@@ -641,6 +703,35 @@ impl Game {
             });
         }
         story::on_char_built(&mut self.s, id);
+    }
+
+    fn debug_start(&mut self) {
+        let g = self;
+        if g.s.cfg.autostart && g.s.cfg.scene.is_none() && g.s.cfg.beat.is_none() && g.s.cfg.cam.is_none() {
+            g.start(false);
+            return;
+        }
+        g.start(false);
+        g.s.dir = Director::new();
+        g.s.dialog = None;
+        g.s.choice = None;
+        g.s.title_card = None;
+        g.s.letterbox_target = 0.0;
+        if let Some(b) = g.s.cfg.beat.clone() {
+            story::debug_beat(&mut g.s, &b);
+        }
+        if let Some(sc) = g.s.cfg.scene.clone() {
+            if let Some(l) = Loc::from_str(&sc) {
+                let spawn = if l == Loc::Plaza { "fountain" } else if l == Loc::Home { "hall" } else { "start" };
+                g.s.goto(l, spawn);
+            }
+        }
+        if let Some(h) = g.s.cfg.hour {
+            g.s.hour = h;
+            g.s.hour_target = h;
+        }
+        g.s.fade = 0.0;
+        g.s.fade_target = 0.0;
     }
 
     pub fn start(&mut self, continue_save: bool) {
@@ -690,6 +781,10 @@ impl Game {
 
     pub fn update(&mut self, dt: f32, input: &mut Input, w: u32, h: u32) {
         let dt = dt.min(0.1);
+        if !self.ready() {
+            self.s.time += dt;
+            return;
+        }
         self.feed_input(input);
         self.s.time += dt;
         self.s.fps = self.s.fps * 0.95 + (1.0 / dt.max(1e-4)) * 0.05;
@@ -1112,6 +1207,11 @@ impl Game {
                     s.toast("piggy", "Regla de ahorro", &format!("Cada semana se ahorrará el {p}% de tu mesada."), 0);
                 }
             }
+            UiAct::Pause => {
+                if s.modal.is_none() && s.screen == Screen::Playing && !s.dir.busy() {
+                    s.modal = Some(Modal::Pause);
+                }
+            }
             UiAct::Resume => s.modal = None,
             UiAct::Quit => {
                 save::save(s);
@@ -1257,7 +1357,7 @@ impl Game {
             }
             return;
         }
-        if (input.pointer_down || input.right_down) && input.drag_dist > 12.0 && !ui_hover {
+        if (input.pointer_down || input.right_down) && input.drag_dist > self.ui.tap_slop() && !ui_hover {
             s.cam.rotate(-input.drag_delta.x * 0.006);
         }
         let mut mv = Vec2::ZERO;
@@ -1431,9 +1531,11 @@ impl Game {
     // ------------------------------------------------------------ rendering
 
     pub fn render(&mut self, gpu: &Gpu, r: &mut Renderer, target: &wgpu::TextureView, w: u32, h: u32) {
-        // progressive character loading
-        if !self.s.build_queue.is_empty() && self.s.time > 0.3 {
-            self.build_next(gpu, r);
+        // characters arriving from the background builders
+        self.pump_builds(gpu, r);
+        if !self.ready() {
+            self.render_boot(gpu, r, target, w, h);
+            return;
         }
         let mut scene = FrameScene::new();
         {
@@ -1542,8 +1644,24 @@ impl Game {
             hud::draw(&mut self.ui, &self.s, &cam, &mut self.ui_acts);
         }
         self.ui_hover = self.ui.pointer_over_ui;
-        if released && drag < 12.0 && !self.ui.pointer_over_ui && !self.ui.click_consumed {
+        if released && drag < self.ui.tap_slop() && !self.ui.pointer_over_ui && !self.ui.click_consumed {
             self.world_tap = pointer;
+        }
+        let batch = self.ui.end();
+        r.render(gpu, target, w, h, &scene, batch);
+    }
+}
+
+impl Game {
+    /// Black frame with a progress bar while the player is still being built.
+    fn render_boot(&mut self, gpu: &Gpu, r: &mut Renderer, target: &wgpu::TextureView, w: u32, h: u32) {
+        let mut scene = FrameScene::new();
+        scene.post.fade = 1.0;
+        let _ = std::mem::take(&mut self.pending_input);
+        self.ui.begin(w, h, UiInput::default(), 1.0 / 60.0, self.s.time, self.s.cfg.ui_scale);
+        if !self.s.cfg.no_ui {
+            let progress = self.load_progress();
+            hud::boot_screen(&mut self.ui, progress, self.s.time);
         }
         let batch = self.ui.end();
         r.render(gpu, target, w, h, &scene, batch);

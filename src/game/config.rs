@@ -20,6 +20,12 @@ pub struct GameConfig {
     pub autoplay: bool,
     /// Render the app icon instead of the game.
     pub icon: bool,
+    /// Log CPU time per frame.
+    pub perf: bool,
+    /// Character detail override: high, low or mobile.
+    pub quality: Option<String>,
+    /// UI density override (surface pixels per logical pixel), to preview phone layouts.
+    pub density: Option<f32>,
     /// Automated play-tester.
     pub bot: bool,
     pub bot_policy: String,
@@ -39,6 +45,9 @@ impl Default for GameConfig {
             autostart: false,
             autoplay: false,
             icon: false,
+            perf: false,
+            quality: None,
+            density: None,
             bot: false,
             bot_policy: "first".into(),
         }
@@ -50,7 +59,7 @@ impl GameConfig {
     /// Some(false) for flags without value and None for unknown arguments.
     pub fn arg(&mut self, key: &str, value: &str) -> Option<bool> {
         let known = [
-            "scene", "bot-policy", "hour", "cam", "beat", "ui-scale", "ui_scale", "save-dir", "no-ui", "noui", "fresh", "bot", "icon", "autoplay", "autostart", "start",
+            "scene", "perf", "quality", "density", "bot-policy", "hour", "cam", "beat", "ui-scale", "ui_scale", "save-dir", "no-ui", "noui", "fresh", "bot", "icon", "autoplay", "autostart", "start",
         ];
         let k = key.trim_start_matches('-');
         if !known.contains(&k) {
@@ -62,6 +71,8 @@ impl GameConfig {
     pub fn apply_arg(&mut self, key: &str, value: &str) -> bool {
         match key.trim_start_matches('-') {
             "scene" => self.scene = Some(value.to_string()),
+            "quality" => self.quality = Some(value.to_string()),
+            "density" => self.density = value.parse().ok(),
             "bot-policy" => {
                 self.bot_policy = value.to_string();
                 self.bot = true;
@@ -83,6 +94,10 @@ impl GameConfig {
             }
             "autostart" | "start" => {
                 self.autostart = true;
+                return false;
+            }
+            "perf" => {
+                self.perf = true;
                 return false;
             }
             "bot" => {
@@ -112,7 +127,7 @@ impl GameConfig {
             let mut it = pair.splitn(2, '=');
             let k = it.next().unwrap_or("");
             let v = it.next().unwrap_or("");
-            if k == "noui" || k == "fresh" || k == "start" || k == "autoplay" {
+            if k == "noui" || k == "fresh" || k == "start" || k == "autoplay" || k == "perf" || k == "bot" {
                 self.apply_arg(k, "");
             } else if !k.is_empty() {
                 self.apply_arg(k, v);

@@ -122,6 +122,8 @@ pub struct Ui {
     pub fonts: Fonts,
     pub batch: UiBatch,
     pub scale: f32,
+    /// Surface pixels per CSS / logical pixel.
+    pub density: f32,
     pub width: f32,
     pub height: f32,
     pub phys_w: f32,
@@ -136,6 +138,8 @@ pub struct Ui {
     pub pointer_over_ui: bool,
     pub click_consumed: bool,
     clip: Option<[f32; 4]>,
+    /// Active clip rect in UI units: hits outside it are ignored.
+    clip_v: Option<Rect>,
     cmd_start: u32,
     pub opacity: f32,
     /// Safe-area insets (logical px): left, top, right, bottom.
@@ -157,6 +161,7 @@ impl Ui {
             fonts: Fonts::new(atlas_size),
             batch: UiBatch::default(),
             scale: 1.0,
+            density: 1.0,
             width: 1280.0,
             height: 720.0,
             phys_w: 1280.0,
@@ -171,6 +176,7 @@ impl Ui {
             pointer_over_ui: false,
             click_consumed: false,
             clip: None,
+            clip_v: None,
             cmd_start: 0,
             opacity: 1.0,
             safe: [0.0; 4],
@@ -188,6 +194,8 @@ impl Ui {
         };
         // keep things readable on small portrait screens
         let base = base.max(self.phys_h.min(self.phys_w) / 900.0);
+        // never smaller than 0.8 CSS pixels per UI unit, so text stays legible on phones
+        let base = base.max(self.density * 0.8);
         self.scale = (base * user_scale).max(0.3);
         self.width = self.phys_w / self.scale;
         self.height = self.phys_h / self.scale;
@@ -231,6 +239,7 @@ impl Ui {
 
     pub fn set_clip(&mut self, r: Option<Rect>) {
         self.flush_cmd();
+        self.clip_v = r;
         self.clip = r.map(|r| {
             [
                 r.x * self.scale,
@@ -297,7 +306,7 @@ impl Ui {
         if let Some(p) = self.pointer() {
             if r.contains(p) {
                 v -= self.input.scroll * 48.0;
-                if self.input.down && self.input.drag_dist > 6.0 {
+                if self.input.down && self.input.drag_dist > 6.0 * self.density.max(1.0) {
                     v -= self.input.drag_delta.y / self.scale;
                 }
             }
@@ -616,16 +625,61 @@ impl Ui {
         let Some(p) = self.pointer() else {
             return (false, false);
         };
+        if let Some(c) = self.clip_v {
+            if !c.contains(p) {
+                return (false, false);
+            }
+        }
         if r.contains(p) {
             self.pointer_over_ui = true;
-            let clicked = self.input.released && self.input.drag_dist < 14.0 && !self.click_consumed;
+            let clicked = self.input.released && self.input.drag_dist < self.tap_slop() && !self.click_consumed;
             if clicked {
                 self.click_consumed = true;
             }
-            (true, clicked)
+            // a finger only "hovers" while it is touching the screen
+            let hover = !self.input.touch || self.input.down || self.input.released;
+            (hover, clicked)
         } else {
             (false, false)
         }
+    }
+
+    /// How far (in surface pixels) a press may move and still count as a tap.
+    pub fn tap_slop(&self) -> f32 {
+        14.0 * self.density.max(1.0)
+    }
+
+    /// Small landscape screens (phones) use tighter layouts.
+    pub fn compact(&self) -> bool {
+        self.height < 600.0
+    }
+
+    /// Starts a vertically scrolling region clipped to `view` and returns the scroll offset.
+    /// Draw the content shifted up by the offset, then call `end_scroll` with its height.
+    pub fn begin_scroll(&mut self, id: &str, view: Rect) -> f32 {
+        let hid = hash_id(id);
+        let content = self.value(hid ^ 0x5c01);
+        let off = self.scroll_area(hid, view, content);
+        self.set_clip(Some(view));
+        off
+    }
+
+    pub fn end_scroll(&mut self, id: &str, view: Rect, content_h: f32) {
+        let hid = hash_id(id);
+        self.set_value(hid ^ 0x5c01, content_h);
+        self.set_clip(None);
+        if content_h > view.h + 1.0 {
+            let off = self.value(hid);
+            let track = Rect::new(view.right() - 5.0, view.y + 4.0, 3.0, view.h - 8.0);
+            let th = (track.h * view.h / content_h).max(24.0);
+            let ty = track.y + (track.h - th) * (off / (content_h - view.h)).clamp(0.0, 1.0);
+            self.rect(Rect::new(track.x, ty, track.w, th), rgba(0xffffff, 70), 1.5);
+        }
+    }
+
+    /// Scrolls a region to the end (e.g. newest chat message).
+    pub fn scroll_to_end(&mut self, id: &str) {
+        self.set_value(hash_id(id), 1e9);
     }
 
     /// Blocks world interaction under this rect.

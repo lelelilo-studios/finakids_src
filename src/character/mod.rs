@@ -5,6 +5,7 @@ pub mod anim;
 pub mod appearance;
 pub mod build;
 pub mod face;
+pub mod factory;
 pub mod skeleton;
 
 use crate::gfx::mesh::{kind, Mat, MeshData};
@@ -119,9 +120,14 @@ pub struct Character {
 
 impl Character {
     pub fn new(gpu: &Gpu, r: &mut Renderer, id: &'static str, app: Appearance, pos: Vec3, yaw: f32, q: Quality) -> Character {
-        let (shoulder, hips) = (1.0 + app.masc * 0.08, 1.0 + (1.0 - app.masc) * 0.05);
-        let skel = Skeleton::new(app.height, shoulder, hips);
+        let skel = factory::skeleton_for(&app);
         let meshes = build::build(&app, &skel, q);
+        Self::from_meshes(gpu, r, id, app, meshes, pos, yaw)
+    }
+
+    /// Creates the character from meshes built elsewhere (see `factory`).
+    pub fn from_meshes(gpu: &Gpu, r: &mut Renderer, id: &'static str, app: Appearance, meshes: build::CharacterMeshes, pos: Vec3, yaw: f32) -> Character {
+        let skel = factory::skeleton_for(&app);
         let mesh = r.upload_skinned(gpu, &meshes.skin);
         let brow_col = {
             let c = rgb(app.hair_color);

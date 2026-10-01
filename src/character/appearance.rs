@@ -200,6 +200,19 @@ impl Appearance {
         }
     }
 
+    /// Appearance for a build key (`sofia`, `mama`, ..., `random:<seed>`).
+    pub fn by_key(key: &str) -> Option<Appearance> {
+        Some(match key {
+            "sofia" => Appearance::sofia(),
+            "mama" => Appearance::mama(),
+            "tomas" => Appearance::tomas(),
+            "abuela" => Appearance::abuela(),
+            "julio" => Appearance::don_julio(),
+            "vale" => Appearance::vale(),
+            _ => Appearance::random(key.strip_prefix("random:")?.parse().ok()?),
+        })
+    }
+
     /// Random pedestrian.
     pub fn random(seed: u64) -> Appearance {
         let mut r = Rng::new(seed * 7919 + 17);

@@ -120,6 +120,8 @@ pub struct Location {
     pub colliders: Vec<(Vec2, Vec2)>,
     pub bounds: (Vec2, Vec2),
     pub interior: bool,
+    /// Outdoor camera box (min x, min z, max x, max z); see `CamCtl::set_area`.
+    pub cam_area: Option<(f32, f32, f32, f32)>,
     pub spawns: Vec<(&'static str, Vec3, f32)>,
     pub interact: Vec<Interactable>,
     pub seats: Vec<Seat>,
@@ -620,6 +622,7 @@ impl Builder {
             colliders: self.colliders,
             bounds,
             interior,
+            cam_area: None,
             spawns: self.spawns,
             interact: self.interact,
             seats: self.seats,
@@ -1127,6 +1130,7 @@ pub fn build_plaza(gpu: &Gpu, r: &mut Renderer) -> Location {
     b.base.plane(m4(Vec3::new(0.0, 0.0, 14.0)), Vec2::new(60.0, 4.0), (8, 1), &Mat::new(0xc9bba8, 0.8).kind(kind::PAVERS));
     b.base.plane(m4(Vec3::new(0.0, -0.3, 0.0)), Vec2::new(120.0, 120.0), (1, 1), &Mat::new(0x6a7a4a, 1.0).kind(kind::GRASS));
     let mut lit_windows = Vec::new();
+    let mut south = MeshData::new();
     let house_cols = [0xe9d8b8, 0xc9dbe0, 0xe8c4b0, 0xd8e0c4, 0xf0e4d0];
     for (i, x) in [-22.0f32, -14.0, -6.0, 2.0, 10.0, 18.0].iter().enumerate() {
         let mut house = MeshData::new();
@@ -1139,10 +1143,14 @@ pub fn build_plaza(gpu: &Gpu, r: &mut Renderer) -> Location {
         // rotate to face north (toward the plaza)
         let mut flipped = MeshData::new();
         flipped.append_xf(&house, m4ry(Vec3::new(2.0 * x, 0.0, 32.4), std::f32::consts::PI));
-        b.base.append(&flipped);
+        south.append(&flipped);
         // doors
-        b.base.append_xf(&door(0x5a3a2a), m4(Vec3::new(*x + 1.5, 0.0, 16.16)) * Mat4::from_rotation_y(std::f32::consts::PI));
+        south.append_xf(&door(0x5a3a2a), m4(Vec3::new(*x + 1.5, 0.0, 16.16)) * Mat4::from_rotation_y(std::f32::consts::PI));
     }
+    // the south row is cut away when the camera ends up behind it (leaving home)
+    b.walls.push((south, Vec3::NEG_Z, Vec3::new(0.0, 0.0, 16.3)));
+    let south_wall = b.walls.len() - 1;
+    let south_lit: Vec<(Vec3, f32, f32)> = std::mem::take(&mut lit_windows);
     let home_door = Vec3::new(-6.0 + 1.5, 0.0, 16.0);
     // north facades: store, café, bank
     let store = (-11.5f32, -3.5f32);
@@ -1322,6 +1330,14 @@ pub fn build_plaza(gpu: &Gpu, r: &mut Renderer) -> Location {
     let lwi = b.prop("lit_windows", lw, Mat4::IDENTITY);
     b.props[lwi].0.glow_lamp = Some(win_lamp);
     b.props[lwi].0.shadow = false;
+    let mut slw = MeshData::new();
+    for (p, w, h) in &south_lit {
+        slw.cube(m4(*p), Vec3::new(w * 0.5, h * 0.5, 0.004), &Mat::new(0xffd89a, 0.4).emit(0.35));
+    }
+    let slwi = b.prop("lit_windows_south", slw, Mat4::IDENTITY);
+    b.props[slwi].0.glow_lamp = Some(win_lamp);
+    b.props[slwi].0.shadow = false;
+    b.props[slwi].0.wall = Some(south_wall);
     // skyline far away
     let mut sky = MeshData::new();
     let mut rng = crate::math::Rng::new(77);
@@ -1348,6 +1364,8 @@ pub fn build_plaza(gpu: &Gpu, r: &mut Renderer) -> Location {
         max_dist: 12.0,
     };
     let mut loc = b.finish(gpu, r, Loc::Plaza, (Vec2::new(-15.5, -6.6), Vec2::new(15.5, 15.3)), false, cam, Vec3::new(0.0, 2.0, 2.0), 17.0);
+    // the camera stays in front of the north facades and the west block
+    loc.cam_area = Some((-15.9, zf + 0.7, 24.0, 40.0));
     loc.ambient_tint = Vec3::ONE;
     loc
 }

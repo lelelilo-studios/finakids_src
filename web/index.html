@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta name="theme-color" content="#0b0c10">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -54,15 +54,99 @@
   window.addEventListener('error', (e) => { if (String(e.message || '').includes('unreachable')) fail('Ocurrió un error inesperado. Intenta recargar la página.'); });
   const canvas = document.getElementById('finakids-canvas');
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  // ---- character builders: Web Workers running the same wasm module
+  let wasmModule = null;
+  const pool = { workers: [], queue: [], results: [], timer: 0, broken: false };
+  function killWorker(w, reason) {
+    if (w.busy) pool.results.push({ id: w.busy.id, error: reason });
+    w.busy = null;
+    pool.workers = pool.workers.filter((x) => x !== w);
+    try { w.terminate(); } catch (e) {}
+    if (!pool.workers.length) {
+      // no builders left: hand the queued jobs back to the main thread
+      pool.broken = true;
+      for (const j of pool.queue) pool.results.push({ id: j.id, error: reason });
+      pool.queue = [];
+    }
+    pump();
+  }
+  function makeWorker() {
+    const w = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+    w.busy = null;
+    w.ready = false;
+    w.onmessage = (e) => {
+      const d = e.data;
+      if (d.ready) { w.ready = true; pump(); return; }
+      if (d.fatal) { console.warn('worker init failed', d.fatal); killWorker(w, d.fatal); return; }
+      pool.results.push(d);
+      w.busy = null;
+      pump();
+    };
+    w.onerror = (e) => { e.preventDefault(); console.warn('worker error', e.message); killWorker(w, String(e.message)); };
+    w.postMessage({ init: wasmModule });
+    return w;
+  }
+  function pump() {
+    clearTimeout(pool.timer);
+    for (const w of pool.workers) {
+      if (!w.busy && w.ready && pool.queue.length) { w.busy = pool.queue.shift(); w.postMessage(w.busy); }
+    }
+    // free the workers' memory once everything is built (important on phones)
+    if (!pool.queue.length && pool.workers.every((w) => !w.busy)) {
+      pool.timer = setTimeout(() => { for (const w of pool.workers) w.terminate(); pool.workers = []; }, 4000);
+    }
+  }
+  globalThis.__fkBuild = (id, key) => {
+    if (pool.broken || typeof Worker === 'undefined') return false;
+    try {
+      const n = Math.max(1, Math.min(3, (navigator.hardwareConcurrency || 2) - 1));
+      while (pool.workers.length < n) pool.workers.push(makeWorker());
+    } catch (e) {
+      console.warn('workers unavailable', e);
+      pool.broken = true;
+      return false;
+    }
+    pool.queue.push({ id, key });
+    pump();
+    return true;
+  };
+  globalThis.__fkPoll = () => (pool.results.length ? pool.results.shift() : null);
+
+  // ---- phones: fullscreen + landscape on the first touch (Android)
+  const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
+  if (isMobile && document.documentElement.requestFullscreen) {
+    const goFull = () => {
+      if (document.fullscreenElement) return;
+      document.documentElement.requestFullscreen({ navigationUI: 'hide' })
+        .then(() => screen.orientation && screen.orientation.lock ? screen.orientation.lock('landscape') : null)
+        .catch(() => {});
+    };
+    window.addEventListener('touchend', goFull, { once: true, capture: true });
+  }
+
   const hasWebGPU = !!navigator.gpu;
   const hasWebGL2 = !!document.createElement('canvas').getContext('webgl2');
   if (!hasWebGPU && !hasWebGL2) {
     fail('Tu navegador no soporta WebGPU ni WebGL2. Prueba con Chrome, Edge, Firefox o Safari actualizados.');
   } else {
-    status.textContent = hasWebGPU ? 'Iniciando con WebGPU…' : 'Iniciando con WebGL2…';
+    status.textContent = 'Cargando el juego…';
     try {
       const mod = await import('./pkg/finakids.js');
-      await mod.default();
+      const wasmUrl = new URL('./pkg/finakids_bg.wasm', import.meta.url);
+      try {
+        wasmModule = await WebAssembly.compileStreaming(fetch(wasmUrl));
+      } catch (e) {
+        try { wasmModule = await WebAssembly.compile(await (await fetch(wasmUrl)).arrayBuffer()); } catch (e2) { wasmModule = null; }
+      }
+      await mod.default(wasmModule ? { module_or_path: wasmModule } : undefined);
+      status.textContent = hasWebGPU ? 'Iniciando gráficos (WebGPU)…' : 'Iniciando gráficos (WebGL2)…';
+      try {
+        mod.start_game();
+      } catch (e) {
+        // winit leaves the start function with an exception on purpose
+        if (!String(e).includes('Using exceptions for control flow')) throw e;
+      }
     } catch (e) {
       if (!String(e).includes('Using exceptions for control flow')) {
         console.error(e);

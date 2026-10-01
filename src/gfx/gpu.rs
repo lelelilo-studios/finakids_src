@@ -37,7 +37,7 @@ impl Gpu {
         log::info!("GPU: {} ({:?})", ainfo.name, ainfo.backend);
 
         let is_webgl = ainfo.backend == wgpu::Backend::Gl && cfg!(target_arch = "wasm32");
-        let is_mobile = cfg!(any(target_os = "android", target_os = "ios"));
+        let is_mobile = crate::platform::is_mobile_device();
         let limits = wgpu::Limits::downlevel_webgl2_defaults()
             .using_resolution(adapter.limits())
             .using_alignment(adapter.limits());
@@ -70,7 +70,8 @@ impl Gpu {
         let msaa_ok = hf.flags.sample_count_supported(4)
             && hf.flags.contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE)
             && df.flags.sample_count_supported(4);
-        let msaa = if msaa_ok { 4 } else { 1 };
+        // phones spend their fill rate on resolution instead of MSAA
+        let msaa = if msaa_ok && !is_mobile { 4 } else { 1 };
 
         let low = is_webgl || is_mobile;
         let info = GpuInfo {
@@ -81,7 +82,7 @@ impl Gpu {
             hdr_format,
             msaa,
             shadow_size: if low { 1024 } else { 2048 },
-            render_scale: if is_mobile { 0.8 } else { 1.0 },
+            render_scale: if is_mobile { 0.85 } else { 1.0 },
         };
         log::info!("{info:?}");
         Gpu {

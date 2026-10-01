@@ -27,10 +27,14 @@ pub const M_DARK: u8 = 13;
 pub enum Quality {
     High,
     Low,
+    /// Phones: about a third of the triangles; normals still come from the SDF.
+    Mobile,
 }
 
 /// Facial landmarks relative to the head bone (bind space offset from HEAD joint).
-#[derive(Clone, Debug, Default)]
+/// Plain data (`Pod`) so it can be sent from build workers as bytes.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct FaceLayout {
     pub eye: [Vec3; 2],
     pub eye_r: f32,
@@ -1075,6 +1079,7 @@ pub fn build(a: &Appearance, sk: &Skeleton, q: Quality) -> CharacterMeshes {
     let (c_body, c_head, c_hand, c_hair) = match q {
         Quality::High => (0.0072, 0.0027, 0.0028, 0.0036),
         Quality::Low => (0.0095, 0.0036, 0.0036, 0.0046),
+        Quality::Mobile => (0.0150, 0.0050, 0.0052, 0.0068),
     };
     let mut skin = SkinMeshData::default();
     let t0 = web_time::Instant::now();

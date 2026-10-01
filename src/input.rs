@@ -42,6 +42,8 @@ pub struct Input {
     second_touch: Option<(u64, Vec2)>,
     pub pinch: f32,
     last_pinch_dist: Option<f32>,
+    /// Surface pixels per window pixel (the web canvas may render below device resolution).
+    pub coord_scale: f32,
 }
 
 fn map_key(code: KeyCode) -> Option<GameKey> {
@@ -84,6 +86,11 @@ impl Input {
 
     pub fn was_pressed(&self, k: GameKey) -> bool {
         self.pressed.contains(&k)
+    }
+
+    fn to_surface(&self, x: f64, y: f64) -> Vec2 {
+        let k = if self.coord_scale > 0.0 { self.coord_scale } else { 1.0 };
+        Vec2::new(x as f32 * k, y as f32 * k)
     }
 
     fn pointer_move(&mut self, p: Vec2) {
@@ -130,7 +137,8 @@ impl Input {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.is_touch = false;
-                self.pointer_move(Vec2::new(position.x as f32, position.y as f32));
+                let p = self.to_surface(position.x, position.y);
+                self.pointer_move(p);
             }
             WindowEvent::CursorLeft { .. } => {
                 if !self.pointer_down {
@@ -169,7 +177,7 @@ impl Input {
 
     fn touch(&mut self, t: &Touch) {
         self.is_touch = true;
-        let p = Vec2::new(t.location.x as f32, t.location.y as f32);
+        let p = self.to_surface(t.location.x, t.location.y);
         match t.phase {
             TouchPhase::Started => {
                 if self.touch_id.is_none() {

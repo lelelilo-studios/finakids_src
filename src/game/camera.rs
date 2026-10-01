@@ -73,6 +73,8 @@ pub struct CamCtl {
     time: f32,
     pub zoom_bias: f32,
     limits: Option<(f32, f32, f32, f32)>,
+    /// Outdoor areas: the camera stays inside this (min x, min z, max x, max z) box.
+    area: Option<(f32, f32, f32, f32)>,
 }
 
 impl CamCtl {
@@ -94,6 +96,7 @@ impl CamCtl {
             time: 0.0,
             zoom_bias: 0.0,
             limits: None,
+            area: None,
         }
     }
 
@@ -158,6 +161,11 @@ impl CamCtl {
         self.limits = lim;
     }
 
+    /// Keeps the follow camera in front of building facades in outdoor areas.
+    pub fn set_area(&mut self, area: Option<(f32, f32, f32, f32)>) {
+        self.area = area;
+    }
+
     pub fn update(&mut self, dt: f32, focus: Vec3, rig: &CamRig) {
         if let Some((_, _, y0, y1)) = self.limits {
             self.yaw_target = self.yaw_target.clamp(y0, y1);
@@ -170,6 +178,25 @@ impl CamCtl {
         let mut follow = self.follow_cam(rig);
         if let Some((x0, x1, _, _)) = self.limits {
             follow.pos.x = follow.pos.x.clamp(x0, x1);
+        }
+        if let Some((x0, z0, x1, z1)) = self.area {
+            // pull the camera in along its view ray until it is back inside the area
+            let d = follow.pos - follow.target;
+            let mut k = 1.0f32;
+            if d.x < 0.0 && follow.pos.x < x0 {
+                k = k.min((x0 - follow.target.x) / d.x);
+            }
+            if d.x > 0.0 && follow.pos.x > x1 {
+                k = k.min((x1 - follow.target.x) / d.x);
+            }
+            if d.z < 0.0 && follow.pos.z < z0 {
+                k = k.min((z0 - follow.target.z) / d.z);
+            }
+            if d.z > 0.0 && follow.pos.z > z1 {
+                k = k.min((z1 - follow.target.z) / d.z);
+            }
+            let min_k = (1.4 / d.length().max(0.1)).min(1.0);
+            follow.pos = follow.target + d * k.clamp(min_k, 1.0);
         }
         // gentle breathing motion
         follow.pos += Vec3::new(noise1(self.time * 0.2, 1.0), noise1(self.time * 0.17, 2.0), 0.0) * 0.03;

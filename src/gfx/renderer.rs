@@ -245,6 +245,16 @@ impl Default for PostSettings {
     }
 }
 
+/// Draw call and triangle counts of the last frame.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FrameStats {
+    pub opaque: u32,
+    pub shadow: u32,
+    pub transparent: u32,
+    pub tris_main: u32,
+    pub tris_shadow: u32,
+}
+
 pub struct FrameScene {
     pub params: SceneParams,
     pub post: PostSettings,
@@ -345,6 +355,7 @@ pub struct Renderer {
     atlas_view: wgpu::TextureView,
     pub atlas_size: u32,
     pub render_scale: f32,
+    pub stats: FrameStats,
     pub last_view_proj: Mat4,
 }
 
@@ -923,6 +934,7 @@ impl Renderer {
             atlas_view,
             atlas_size,
             render_scale: gpu.info.render_scale,
+            stats: FrameStats::default(),
             last_view_proj: Mat4::IDENTITY,
         }
     }
@@ -1317,6 +1329,18 @@ impl Renderer {
             inst.push(to_inst(d));
         }
         let additive = build_groups(&|d: &Draw| d.main && d.pass == DrawPass::Additive, &mut inst);
+        let tris = |gs: &[Group]| -> u32 {
+            gs.iter()
+                .map(|g| self.meshes[g.mesh.0 as usize].as_ref().map(|m| m.index_count / 3 * g.count).unwrap_or(0))
+                .sum()
+        };
+        self.stats = FrameStats {
+            opaque: opaque.len() as u32,
+            shadow: shadows.len() as u32,
+            transparent: (transparent.len() + additive.len()) as u32,
+            tris_main: tris(&opaque),
+            tris_shadow: tris(&shadows),
+        };
 
         if inst.len() as u64 > self.instance_cap {
             self.instance_cap = (inst.len() as u64).next_power_of_two();

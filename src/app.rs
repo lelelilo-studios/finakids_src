@@ -25,6 +25,91 @@ struct Running {
     config: wgpu::SurfaceConfiguration,
     renderer: Renderer,
     game: Game,
+    /// Surface pixels per window pixel.
+    surf_scale: f32,
+    perf: Perf,
+}
+
+/// Frame-time tracking for dynamic resolution on phones and in browsers.
+struct Perf {
+    /// `?perf=1` / `--perf`: log CPU time per frame.
+    log: bool,
+    acc: [f32; 3],
+    frames: u32,
+    enabled: bool,
+    ms: f32,
+    timer: f32,
+    max_scale: f32,
+    min_scale: f32,
+}
+
+impl Perf {
+    fn new(gpu: &Gpu) -> Perf {
+        Perf {
+            log: false,
+            acc: [0.0; 3],
+            frames: 0,
+            enabled: gpu.info.is_mobile || cfg!(target_arch = "wasm32"),
+            ms: 16.7,
+            timer: 0.0,
+            max_scale: gpu.info.render_scale,
+            min_scale: if gpu.info.is_mobile { 0.5 } else { 0.6 },
+        }
+    }
+
+    /// Returns a new render scale when it should change.
+    fn update(&mut self, dt: f32, current: f32, loading: bool) -> Option<f32> {
+        if !self.enabled {
+            return None;
+        }
+        let ms = dt * 1000.0;
+        // ignore hitches (tab switches, loading) so they don't drag quality down
+        if loading || ms > 250.0 {
+            self.timer = 0.0;
+            return None;
+        }
+        self.ms += (ms - self.ms) * 0.08;
+        self.timer += dt;
+        if self.ms > 24.0 && self.timer > 2.5 && current > self.min_scale + 0.01 {
+            self.timer = 0.0;
+            return Some((current - 0.1).max(self.min_scale));
+        }
+        if self.ms < 15.0 && self.timer > 5.0 && current < self.max_scale - 0.01 {
+            self.timer = 0.0;
+            return Some((current + 0.05).min(self.max_scale));
+        }
+        None
+    }
+}
+
+/// Surface size for a window. The browser canvas is kept below device resolution
+/// on dense screens: phones have 3x pixel ratios that no mobile GPU can fill.
+fn surface_size(window: &Window, is_mobile: bool) -> (u32, u32, f32) {
+    let size = window.inner_size();
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = is_mobile;
+        (size.width.max(1), size.height.max(1), 1.0)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let dpr = window.scale_factor().max(0.1);
+        // measure the canvas in CSS pixels: that is what the page layout gives us
+        let css = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.get_element_by_id("finakids-canvas"))
+            .map(|c| (c.client_width() as f64, c.client_height() as f64))
+            .filter(|c| c.0 >= 1.0 && c.1 >= 1.0)
+            .unwrap_or((size.width as f64 / dpr, size.height as f64 / dpr));
+        let max_dpr = if is_mobile { 1.75 } else { 2.0 };
+        let mut k = dpr.min(max_dpr);
+        let max_px = if is_mobile { 1.25e6 } else { 4.2e6 };
+        k *= (max_px / (css.0 * css.1 * k * k)).sqrt().min(1.0);
+        let w = (css.0 * k).round().max(1.0);
+        let h = (css.1 * k).round().max(1.0);
+        // pointer events arrive in CSS pixels times the device pixel ratio
+        (w as u32, h as u32, (k / dpr) as f32)
+    }
 }
 
 pub struct App {
@@ -129,8 +214,15 @@ impl App {
         }
 
         let (w, h) = (st.config.width, st.config.height);
+        st.game.set_density(window.scale_factor() as f32 * st.surf_scale);
+        let t_update = Instant::now();
         st.game.update(dt, &mut self.input, w, h);
+        let t_update = t_update.elapsed().as_secs_f32();
         self.input.begin_frame();
+        if let Some(scale) = st.perf.update(dt, st.renderer.render_scale, !st.game.ready()) {
+            log::info!("render scale {:.2} ({:.1} ms/frame)", scale, st.perf.ms);
+            st.renderer.set_render_scale(scale);
+        }
 
         let Some(surface) = st.surface.as_ref() else {
             return;
@@ -154,11 +246,38 @@ impl App {
             }
         };
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let t_render = Instant::now();
         st.game.render(&st.gpu, &mut st.renderer, &view, w, h);
         window.pre_present_notify();
         st.gpu.queue.present(frame);
+        if st.perf.log {
+            let p = &mut st.perf;
+            p.acc[0] += t_update;
+            p.acc[1] += t_render.elapsed().as_secs_f32();
+            p.acc[2] += dt;
+            p.frames += 1;
+            if p.frames >= 40 {
+                let n = p.frames as f32;
+                log::info!(
+                    "perf: update {:.2} ms, render {:.2} ms, frame {:.1} ms ({}x{} @ {:.2}) {:?}",
+                    p.acc[0] / n * 1000.0,
+                    p.acc[1] / n * 1000.0,
+                    p.acc[2] / n * 1000.0,
+                    w,
+                    h,
+                    st.renderer.render_scale,
+                    st.renderer.stats
+                );
+                p.acc = [0.0; 3];
+                p.frames = 0;
+            }
+        }
         #[cfg(target_arch = "wasm32")]
-        crate::platform::hide_loading();
+        if st.game.ready() {
+            crate::platform::hide_loading();
+        } else {
+            crate::platform::set_loading_status(&format!("Preparando personajes... {:.0}%", st.game.load_progress() * 100.0));
+        }
         if st.game.quit_requested() && !cfg!(target_arch = "wasm32") {
             std::process::exit(0);
         }
@@ -187,10 +306,14 @@ impl ApplicationHandler<UserEvent> for App {
             return;
         }
         #[allow(unused_mut)]
-        let mut attrs = Window::default_attributes()
-            .with_title("Finakids")
-            .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0))
-            .with_min_inner_size(winit::dpi::LogicalSize::new(480.0, 320.0));
+        let mut attrs = Window::default_attributes().with_title("Finakids");
+        // on the web the canvas follows the page layout (CSS); a fixed size would crop it on phones
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            attrs = attrs
+                .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0))
+                .with_min_inner_size(winit::dpi::LogicalSize::new(480.0, 320.0));
+        }
         #[cfg(target_arch = "wasm32")]
         {
             use wasm_bindgen::JsCast;
@@ -212,17 +335,22 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::Ready(ready) => {
                 let Ready { gpu, surface } = *ready;
                 let window = self.window.clone().expect("window");
-                let size = window.inner_size();
-                let config = Self::surface_config(&gpu, &surface, size.width, size.height);
+                let (sw, sh, surf_scale) = surface_size(&window, gpu.info.is_mobile);
+                let config = Self::surface_config(&gpu, &surface, sw, sh);
                 surface.configure(&gpu.device, &config);
                 let mut renderer = Renderer::new(&gpu, config.format);
                 let game = Game::new(&gpu, &mut renderer, self.cfg.clone());
+                let mut perf = Perf::new(&gpu);
+                perf.log = self.cfg.perf;
+                self.input.coord_scale = surf_scale;
                 self.state = Some(Running {
                     gpu,
                     surface: Some(surface),
                     config,
                     renderer,
                     game,
+                    surf_scale,
+                    perf,
                 });
                 self.loading = false;
                 self.last = Instant::now();
@@ -249,10 +377,13 @@ impl ApplicationHandler<UserEvent> for App {
                 }
                 event_loop.exit();
             }
-            WindowEvent::Resized(size) => {
-                if let Some(st) = self.state.as_mut() {
-                    st.config.width = size.width.max(1);
-                    st.config.height = size.height.max(1);
+            WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
+                if let (Some(st), Some(window)) = (self.state.as_mut(), self.window.as_ref()) {
+                    let (sw, sh, k) = surface_size(window, st.gpu.info.is_mobile);
+                    st.config.width = sw;
+                    st.config.height = sh;
+                    st.surf_scale = k;
+                    self.input.coord_scale = k;
                     if let Some(s) = &st.surface {
                         s.configure(&st.gpu.device, &st.config);
                     }
@@ -305,7 +436,9 @@ pub fn screenshot(cfg: GameConfig, path: &str, width: u32, height: u32, frames: 
         let gpu = Gpu::new(instance, None).await;
         let format = wgpu::TextureFormat::Rgba8Unorm;
         let mut renderer = Renderer::new(&gpu, format);
+        let perf = cfg.perf;
         let mut game = Game::new(&gpu, &mut renderer, cfg);
+        game.set_density(1.0);
         let tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("shot"),
             size: wgpu::Extent3d {
@@ -322,6 +455,11 @@ pub fn screenshot(cfg: GameConfig, path: &str, width: u32, height: u32, frames: 
         });
         let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
         let mut input = Input::default();
+        // characters are built on worker threads: wait for them before counting frames
+        while game.is_loading() {
+            game.render(&gpu, &mut renderer, &view, width, height);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
         let t0 = Instant::now();
         for f in 0..frames {
             game.update(1.0 / 30.0, &mut input, width, height);
@@ -331,6 +469,9 @@ pub fn screenshot(cfg: GameConfig, path: &str, width: u32, height: u32, frames: 
             }
         }
         game.render(&gpu, &mut renderer, &view, width, height);
+        if perf {
+            log::info!("perf: {:?}", renderer.stats);
+        }
         let bpr = (width * 4).div_ceil(256) * 256;
         let buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("readback"),

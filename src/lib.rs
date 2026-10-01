@@ -42,9 +42,11 @@ fn android_main(android: winit::platform::android::activity::AndroidApp) {
     app::run_with(event_loop, cfg);
 }
 
+/// Web entry point, called by index.html after the module loads (workers load
+/// the same module only to build characters, so this is not a `start` function).
 #[cfg(target_arch = "wasm32")]
-#[wasm_bindgen::prelude::wasm_bindgen(start)]
-pub fn wasm_main() {
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn start_game() {
     let mut cfg = GameConfig::default();
     cfg.apply_url_query();
     run_config(cfg);
