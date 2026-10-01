@@ -1,4 +1,6 @@
 /target
+/target-win
+/target-android
 /dist
 .DS_Store
 /.claude/
