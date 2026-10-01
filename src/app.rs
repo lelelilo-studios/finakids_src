@@ -360,6 +360,13 @@ impl ApplicationHandler<UserEvent> for App {
                 let game = Game::new(&gpu, &mut renderer, self.cfg.clone());
                 let mut perf = Perf::new(&gpu);
                 perf.log = self.cfg.perf;
+                // native phones render the 3D scene at about a megapixel; the UI stays sharp
+                if gpu.info.is_mobile && !cfg!(target_arch = "wasm32") {
+                    let k = (1.1e6 / (sw as f32 * sh as f32)).sqrt().clamp(0.5, gpu.info.render_scale);
+                    renderer.set_render_scale(k);
+                    perf.max_scale = k;
+                    perf.ceil = k;
+                }
                 self.input.coord_scale = surf_scale;
                 self.state = Some(Running {
                     gpu,
