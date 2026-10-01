@@ -401,10 +401,22 @@ fn hint(ui: &mut Ui, s: &State) {
         return;
     };
     let a = (age * 3.0).min(1.0) * (1.0 - ((age - 7.0) / 1.0).clamp(0.0, 1.0));
+    // touch screens get the same tips without keyboard keys
+    let touch_text = if ui.input.touch || ui.compact() {
+        match t.as_str() {
+            x if x.starts_with("Camina con WASD") => Some("Toca el suelo para caminar. Toca la puerta para salir de tu habitación."),
+            x if x.starts_with("Toca a un personaje") => Some("Toca a un personaje para acercarte y hablar."),
+            x if x.starts_with("Abre tu teléfono") => Some("Abre tu teléfono (botón inferior derecho) para ver tu banco y tus metas."),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let t: &str = touch_text.unwrap_or(t.as_str());
     let lines = ui.wrap_lines(t, 14.0, FONT_REGULAR, 420.0);
     let h = 24.0 + lines.len() as f32 * 20.0;
-    // on phones the hint sits above the interaction prompt instead of beside it
-    let lift = if ui.width < 1180.0 { 70.0 } else { 0.0 };
+    // the hint sits above the interaction prompt unless the screen is wide enough for both
+    let lift = if ui.width < 1500.0 { 70.0 } else { 0.0 };
     let r = Rect::new(M, ui.height - M - h - lift, 470.0, h);
     let old = ui.opacity;
     ui.opacity *= a;

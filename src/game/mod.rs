@@ -451,8 +451,8 @@ impl State {
                 let (h, yaw) = head(w)?;
                 let f = Quat::from_rotation_y(yaw) * Vec3::Z;
                 let side = Quat::from_rotation_y(yaw) * Vec3::X;
-                let pos = clamp(h + f * 0.75 - side * 0.25 - Vec3::Y * 0.28);
-                let target = h - Vec3::Y * 0.16 + f * 0.12;
+                let pos = clamp(h + f * 0.92 - side * 0.24 - Vec3::Y * 0.2);
+                let target = h - Vec3::Y * 0.05 + f * 0.1;
                 Some(Shot::dolly(pos, pos + f * 0.06, target, 36.0, 5.0).blend(0.7))
             }
             ShotKind::Hero(w) => {
