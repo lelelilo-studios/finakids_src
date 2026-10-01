@@ -42,7 +42,10 @@ pub struct HandChan {
     pub w: f32,
     /// Direction the palm faces (local).
     pub palm: Vec3,
+    /// Finger curl: 0 = open flat hand, 0.25 = relaxed, 1 = fist.
     pub grip: f32,
+    /// Index finger extended while the others curl (pointing).
+    pub point: f32,
 }
 
 impl Default for HandChan {
@@ -52,6 +55,50 @@ impl Default for HandChan {
             w: 0.0,
             palm: Vec3::NEG_X,
             grip: 0.25,
+            point: 0.0,
+        }
+    }
+}
+
+/// How a hand wraps a held object (drives the finger pose).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Grasp {
+    #[default]
+    None,
+    /// Flat object resting on the fingers with the thumb over its edge (phone, bills).
+    Flat,
+    /// Fingers wrapped around a cylinder (cup).
+    Wrap,
+    /// Closed around a thin handle (bag).
+    Handle,
+    /// Small object pinched between thumb and fingers (bracelet).
+    Pinch,
+}
+
+/// Finger joint angles: [fingers MCP, fingers PIP, index MCP, index PIP, thumb opposition, thumb flex].
+type Fingers = [f32; 6];
+
+fn finger_pose(grip: f32, point: f32, grasp: Grasp) -> Fingers {
+    match grasp {
+        Grasp::Flat => [-0.05, 0.1, -0.06, 0.08, 0.66, 0.28],
+        Grasp::Wrap => [0.6, 0.8, 0.5, 0.72, 0.55, 0.3],
+        Grasp::Handle => [1.2, 1.45, 1.12, 1.4, 0.6, 0.65],
+        Grasp::Pinch => [0.55, 0.75, 0.42, 0.6, 0.58, 0.42],
+        Grasp::None => {
+            let c = grip.clamp(0.0, 1.1);
+            let others = c.max(point * 0.95);
+            let idx = c * (1.0 - point);
+            let mcp = |c: f32| 0.03 + 1.3 * c.powf(1.4);
+            let pip = |c: f32| 0.06 + 1.55 * c.powf(1.15);
+            // the little-finger side curls a touch more than the index (natural cascade)
+            [
+                mcp(others) * 1.06,
+                pip(others),
+                mcp(idx) * 0.86,
+                pip(idx) * 0.9,
+                -0.04 + 0.72 * c.max(point * 0.8),
+                0.04 + 0.7 * c.max(point * 0.9),
+            ]
         }
     }
 }
@@ -77,6 +124,8 @@ pub enum Set {
     Hand(usize, Vec3, Vec3, f32),
     HandW(usize, f32),
     Grip(usize, f32),
+    /// Extend the index finger (0..1) while the other fingers curl.
+    Point(usize, f32),
     Bend(f32),
     Twist(f32),
     Side(f32),
@@ -177,6 +226,9 @@ pub struct Animator {
     rest: Chans,
     holding: bool,
     pub events: Vec<u32>,
+    /// What each hand is wrapped around (set from the held props).
+    pub grasp: [Grasp; 2],
+    fingers: [Fingers; 2],
     // secondary
     hair: Spring3,
     hem: Spring3,
@@ -245,6 +297,8 @@ impl Animator {
             rest: Chans::default(),
             holding: false,
             events: Vec::new(),
+            grasp: [Grasp::None; 2],
+            fingers: [finger_pose(0.25, 0.0, Grasp::None); 2],
             hair: Spring3::default(),
             hem: Spring3::default(),
             tail: [Vec3::ZERO; TAIL_N],
@@ -529,6 +583,7 @@ impl Animator {
                         }
                         Set::HandW(side, w) => c.hand[side].w = lerp(st.hand[side].w, w, k),
                         Set::Grip(side, g) => c.hand[side].grip = lerp(st.hand[side].grip, g, k),
+                        Set::Point(side, g) => c.hand[side].point = lerp(st.hand[side].point, g, k),
                         Set::Bend(v) => c.bend = lerp(st.bend, v, k),
                         Set::Twist(v) => c.twist = lerp(st.twist, v, k),
                         Set::Side(v) => c.side = lerp(st.side, v, k),
@@ -575,6 +630,7 @@ impl Animator {
             for side in 0..2 {
                 self.ch.hand[side].w = damp(self.ch.hand[side].w, 0.0, r, dt);
                 self.ch.hand[side].grip = damp(self.ch.hand[side].grip, 0.25, r, dt);
+                self.ch.hand[side].point = damp(self.ch.hand[side].point, 0.0, r, dt);
             }
             self.ch.bend = damp(self.ch.bend, 0.0, r, dt);
             self.ch.twist = damp(self.ch.twist, 0.0, r, dt);
@@ -623,6 +679,15 @@ impl Animator {
             target.brow_raise[0] += noise1(t * 0.2, self.seed + 3.0) * 0.25 * self.talk_amt;
             target.brow_raise[1] += noise1(t * 0.2, self.seed + 3.0) * 0.22 * self.talk_amt;
         }
+        // micro-expressions: faces never hold a perfectly still mask
+        let tm = self.time;
+        let drift = noise1(tm * 0.21, self.seed + 21.0);
+        target.smile += drift * 0.045;
+        target.asym += noise1(tm * 0.13, self.seed + 27.0) * 0.12;
+        target.brow_raise[0] += noise1(tm * 0.33, self.seed + 31.0) * 0.07 + drift * 0.03;
+        target.brow_raise[1] += noise1(tm * 0.29, self.seed + 37.0) * 0.07 + drift * 0.03;
+        target.lid_open *= 0.975 + 0.035 * noise1(tm * 0.4, self.seed + 41.0);
+        target.lid_lower += (drift * 0.08).max(0.0);
         self.face.damp_to(&target, 9.0, dt);
         // blinking
         self.next_blink -= dt;
@@ -823,7 +888,7 @@ impl Animator {
             let opp = foot_local[1 - side].z - foot_local[side].z;
             let swing = opp * 0.55 * walk;
             let mut rest = Vec3::new(
-                s * (sk.bind[UPARM[side]].x.abs() + 0.035 * k),
+                s * (sk.bind[UPARM[side]].x.abs().max(sk.bind[THIGH[side]].x.abs() + 0.085 * k) + 0.05 * k) + hips.x * 0.6,
                 shoulder.y - (sk.upper_len + sk.fore_len) * 0.93,
                 0.03 * k + swing,
             );
@@ -842,7 +907,8 @@ impl Animator {
             // gesture targets are authored standing: follow the body when seated
             hc.pos.y += sit_drop;
             let target = rest.lerp(hc.pos, hc.w);
-            let palm_rest = Vec3::new(-s, -0.2, 0.15).normalize();
+            // hanging arms rotate slightly inward: palms face the thighs and a little back
+            let palm_rest = Vec3::new(-s, -0.15, -0.5).normalize();
             let palm_rest = palm_rest.lerp(Vec3::NEG_Y, self.sit_amt).normalize();
             let palm = palm_rest.lerp(hc.palm, hc.w).normalize_or(palm_rest);
             let pole = Vec3::new(s * 0.45, -1.0, -0.5).normalize();
@@ -863,15 +929,34 @@ impl Animator {
             let bind_palm = sk.bone_dir(FOREARM[side]).cross(Vec3::Z).normalize() * s;
             pose.rot[FOREARM[side]] = aim_local(&self.fk, sk, FOREARM[side], fore_dir, bind_palm, palm_perp.normalize());
             self.fk.update_bone(sk, &pose, FOREARM[side]);
-            // hand continues the forearm, slightly relaxed
-            let relax = Quat::from_axis_angle(Vec3::Z, 0.0);
-            pose.rot[HAND[side]] = relax;
+            // the wrist continues the forearm with a slight natural flex when hanging
+            let hf = hand_frame(side);
+            let curl_axis = hf.f.cross(hf.n).normalize();
+            let hang = (1.0 - hc.w) * (1.0 - self.sit_amt);
+            pose.rot[HAND[side]] = Quat::from_axis_angle(curl_axis, 0.1 * hang);
             self.fk.update_bone(sk, &pose, HAND[side]);
-            // finger curl around the palm's side axis
-            let grip = hc.grip.max(0.15 + 0.05 * breath.abs());
-            let axis = sk.bone_dir(HAND[side]).cross(bind_palm).normalize();
-            pose.rot[FINGERS[side]] = Quat::from_axis_angle(axis, grip * 1.4);
-            self.fk.update_bone(sk, &pose, FINGERS[side]);
+            // fingers: every joint eases toward the pose asked by the action / held object,
+            // with a little breathing so resting hands are never frozen
+            let life = 0.025 * breath + 0.02 * noise1(t * 0.4, self.seed + 11.0 * s);
+            let want = finger_pose(hc.grip + life, hc.point, self.grasp[side]);
+            let fg = &mut self.fingers[side];
+            for i in 0..6 {
+                fg[i] = damp(fg[i], want[i], 14.0, dt);
+            }
+            let fg = *fg;
+            // a relaxed hand swings its fingers slightly with the arm
+            let lag = swing * 0.6;
+            pose.rot[FINGERS[side]] = Quat::from_axis_angle(curl_axis, fg[0] + lag);
+            pose.rot[FINGERS2[side]] = Quat::from_axis_angle(curl_axis, fg[1]);
+            // the index splays a touch away from the others when the hand opens
+            let splay = Quat::from_axis_angle(hf.n, s * 0.07 * (1.0 - fg[2]).clamp(0.0, 1.0));
+            pose.rot[INDEX[side]] = splay * Quat::from_axis_angle(curl_axis, fg[2] + lag * 0.8);
+            pose.rot[INDEX2[side]] = Quat::from_axis_angle(curl_axis, fg[3]);
+            // thumb: swings across the palm (opposition) and flexes toward the fingers
+            let td = sk.bone_dir(THUMB2[side]);
+            let flex_axis = td.cross(hf.n).normalize();
+            pose.rot[THUMB[side]] = Quat::from_axis_angle(hf.f, s * fg[4]) * Quat::from_axis_angle(flex_axis, fg[5] * 0.35);
+            pose.rot[THUMB2[side]] = Quat::from_axis_angle(flex_axis, fg[5]);
         }
 
         // ---- secondary motion
@@ -942,7 +1027,7 @@ impl Animator {
                 let l = d.length().max(1e-5);
                 self.tail[i] = a + d / l * seg[i - 1];
                 // collide
-                for (c, r) in [(head_c, 0.098 * sk.height / 1.65), (neck_c, 0.075 * sk.height / 1.65)] {
+                for (c, r) in [(head_c, 0.108 * sk.height / 1.65), (neck_c, 0.078 * sk.height / 1.65)] {
                     let v = self.tail[i] - c;
                     if v.length() < r {
                         self.tail[i] = c + v.normalize_or(Vec3::NEG_Z) * r;

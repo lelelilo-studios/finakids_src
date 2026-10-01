@@ -33,7 +33,8 @@ pub struct SharedCharMeshes {
     pub eyeball: MeshId,
     pub lid_upper: MeshId,
     pub lid_lower: MeshId,
-    pub lash: MeshId,
+    /// Upper lash lines: index = side + 2 * (thin as usize).
+    pub lash: [MeshId; 4],
     pub blob: MeshId,
     pub phone: MeshId,
     pub phone_screen: MeshId,
@@ -85,7 +86,12 @@ impl SharedCharMeshes {
             eyeball: r.upload_mesh(gpu, &fm.eyeball),
             lid_upper: r.upload_mesh(gpu, &fm.lid_upper),
             lid_lower: r.upload_mesh(gpu, &fm.lid_lower),
-            lash: r.upload_mesh(gpu, &fm.lash),
+            lash: [
+                r.upload_mesh(gpu, &fm.lash[0]),
+                r.upload_mesh(gpu, &fm.lash[1]),
+                r.upload_mesh(gpu, &fm.lash[2]),
+                r.upload_mesh(gpu, &fm.lash[3]),
+            ],
             blob: r.upload_mesh(gpu, &blob),
             phone: r.upload_mesh(gpu, &phone),
             phone_screen: r.upload_mesh(gpu, &screen),
@@ -219,6 +225,16 @@ impl Character {
                 self.anim.desired_vel = d / dist * self.walk_speed * slow;
             }
         }
+        // fingers wrap whatever the hand is holding
+        for side in 0..2 {
+            self.anim.grasp[side] = match self.held[side] {
+                Some(HeldProp::Phone) | Some(HeldProp::Bills) => anim::Grasp::Flat,
+                Some(HeldProp::Cup) => anim::Grasp::Wrap,
+                Some(HeldProp::Bag) => anim::Grasp::Handle,
+                Some(HeldProp::Bracelet) => anim::Grasp::Pinch,
+                None => anim::Grasp::None,
+            };
+        }
         self.anim.update(dt);
         // phone screen glow follows usage
         let target_glow = if self.held[1] == Some(HeldProp::Phone) { 1.0 } else { 0.0 };
@@ -237,7 +253,7 @@ impl Character {
         let t = x;
         let rot = Quat::from_mat3(&glam::Mat3::from_cols(x, f, n));
         let off = match p {
-            HeldProp::Phone => f * 0.075 * k + n * 0.02 * k,
+            HeldProp::Phone => f * 0.09 * k + n * 0.0235 * k,
             HeldProp::Cup => f * 0.05 * k + n * 0.045 * k + t * 0.02 * k,
             HeldProp::Bag => f * 0.08 * k,
             HeldProp::Bills => f * 0.07 * k + n * 0.012 * k,
@@ -324,7 +340,11 @@ impl Character {
         let char_p = Vec4::new(0.0, 0.0, 0.0, 1.0);
         let er = self.face.eye_r;
         let blink = self.anim.blink_amt;
+        let gaze_pitch = self.anim.eye_rot.to_euler(glam::EulerRot::YXZ).1;
+        let (lid_up, lid_lo) = face::lid_angles(&f, blink, gaze_pitch);
+        let thin_lash = if self.app.masc > 0.5 { 2 } else { 0 };
         for side in 0..2 {
+            let s = sx(side);
             let c = self.face.eye[side];
             let eye_xf = head_local * Mat4::from_translation(c) * Mat4::from_quat(self.anim.eye_rot) * Mat4::from_scale(Vec3::splat(er));
             scene.draws.push(
@@ -333,19 +353,15 @@ impl Character {
                     .params(Vec4::new(0.3, 0.0, 0.0, 1.0))
                     .no_shadow(),
             );
-            // lids
-            let open = (f.lid_open * (1.0 - blink)).clamp(0.0, 1.35);
-            let look_down = self.anim.eye_rot.to_euler(glam::EulerRot::YXZ).1.max(0.0);
-            let upper_edge = 69.0 + (1.0 - open) * 46.0 + look_down.to_degrees() * 0.6;
-            let upper_rot = (upper_edge - 60.0).to_radians();
-            let lower_edge = 114.0 - f.lid_lower * 12.0 - (1.0 - open.min(1.0)) * 4.0;
-            let lower_rot = -(128.0f32 - lower_edge).to_radians();
-            let lid_scale = Vec3::splat(er * 1.07);
-            let base = head_local * Mat4::from_translation(c);
-            let up_xf = base * Mat4::from_quat(Quat::from_rotation_x(upper_rot)) * Mat4::from_scale(lid_scale);
+            // lids: hemispherical shells hinged on the eye corners. The frame follows the
+            // curve of the face (outer corner further back) with a slight upward tilt.
+            let frame = Quat::from_rotation_y(face::EYE_YAW * s) * Quat::from_rotation_z((0.055 + 0.035 * (1.0 - self.app.masc)) * s);
+            let lid_scale = Vec3::splat(er * face::LID_SCALE);
+            let base = head_local * Mat4::from_translation(c) * Mat4::from_quat(frame);
+            let up_xf = base * Mat4::from_quat(Quat::from_rotation_x(-lid_up)) * Mat4::from_scale(lid_scale);
             scene.draws.push(Draw::new(shared.lid_upper, up_xf).tint(skin_tint).params(char_p).no_shadow());
-            scene.draws.push(Draw::new(shared.lash, up_xf).params(char_p).no_shadow());
-            let lo_xf = base * Mat4::from_quat(Quat::from_rotation_x(lower_rot)) * Mat4::from_scale(lid_scale);
+            scene.draws.push(Draw::new(shared.lash[side + thin_lash], up_xf).params(char_p).no_shadow());
+            let lo_xf = base * Mat4::from_quat(Quat::from_rotation_x(lid_lo)) * Mat4::from_scale(lid_scale);
             scene.draws.push(Draw::new(shared.lid_lower, lo_xf).tint(skin_tint).params(char_p).no_shadow());
             // brow
             let bxf = head_local * face::brow_xf(&self.face, side, &f);

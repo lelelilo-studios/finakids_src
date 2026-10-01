@@ -103,7 +103,7 @@ pub fn drop_phone(k: f32) -> Action {
             ph(0.12, Ease::In, vec![Set::Grip(R, 0.0), Set::Event(EV_DROP), Set::Expr(Expr::Surprised)]),
             ph(0.25, Ease::OutBack, vec![Set::Hand(R, v(k, -0.1, 1.05, 0.35), n(0.0, -1.0, 0.0), 1.0), Set::Hand(L, v(k, 0.1, 1.05, 0.3), n(0.0, -1.0, 0.0), 1.0), Set::Bend(0.2), Set::LookLocal(v(k, 0.0, 0.0, 0.5))]),
             ph(0.6, Ease::Out, vec![Set::Bend(0.35), Set::Crouch(0.1)]),
-            ph(0.5, Ease::InOut, vec![Set::Hand(L, v(k, 0.02, 1.5, 0.12), n(0.0, 0.0, -1.0), 1.0), Set::Expr(Expr::Worried), Set::Bend(0.25), Set::Crouch(0.05)]),
+            ph(0.5, Ease::InOut, vec![Set::Hand(L, v(k, 0.03, 1.415, 0.155), n(0.0, 0.0, -1.0), 1.0), Set::Grip(L, 0.15), Set::Expr(Expr::Worried), Set::Bend(0.25), Set::Crouch(0.05)]),
             ph(0.8, Ease::InOut, vec![Set::HandW(L, 0.0), Set::HandW(R, 0.0), Set::Bend(0.0), Set::Crouch(0.0)]),
         ],
     }
@@ -142,7 +142,8 @@ pub fn think(k: f32) -> Action {
         hold: true,
         phases: vec![
             ph(0.3, Ease::InOut, vec![Set::HeadPitch(-0.1), Set::Expr(Expr::Thinking)]),
-            ph(0.6, Ease::InOut, vec![Set::Hand(R, v(k, -0.005, 1.455, 0.115), n(0.2, 0.2, -1.0), 1.0), Set::Grip(R, 0.55), Set::Hand(L, v(k, -0.06, 1.12, 0.16), n(0.0, 1.0, -0.2), 1.0), Set::HeadYaw(0.15), Set::HeadPitch(-0.18)]),
+            // chin resting on a loose fist, the other arm supporting the elbow
+            ph(0.6, Ease::InOut, vec![Set::Hand(R, v(k, -0.025, 1.355, 0.135), n(0.2, 0.2, -1.0), 1.0), Set::Grip(R, 0.6), Set::Hand(L, v(k, -0.06, 1.12, 0.16), n(0.0, 1.0, -0.2), 1.0), Set::Grip(L, 0.3), Set::HeadYaw(0.15), Set::HeadPitch(-0.18)]),
             ph(1.2, Ease::Sine, vec![Set::HeadYaw(-0.1), Set::HeadRoll(0.06)]),
         ],
     }
@@ -212,7 +213,7 @@ pub fn facepalm(k: f32) -> Action {
         hold: false,
         phases: vec![
             ph(0.2, Ease::In, vec![Set::HeadPitch(-0.1)]),
-            ph(0.35, Ease::Out, vec![Set::Hand(R, v(k, -0.01, 1.585, 0.11), n(0.0, -0.2, -1.0), 1.0), Set::Grip(R, 0.2), Set::HeadPitch(0.25), Set::Expr(Expr::Annoyed)]),
+            ph(0.35, Ease::Out, vec![Set::Hand(R, v(k, -0.015, 1.47, 0.155), n(0.0, -0.2, -1.0), 1.0), Set::Grip(R, 0.12), Set::HeadPitch(0.25), Set::Expr(Expr::Annoyed)]),
             ph(1.0, Ease::Linear, vec![Set::HeadYaw(0.1)]),
             ph(0.5, Ease::InOut, vec![Set::HandW(R, 0.0), Set::HeadPitch(0.0), Set::HeadYaw(0.0)]),
         ],
@@ -279,9 +280,9 @@ pub fn point_at(k: f32, target: Vec3) -> Action {
         name: "point",
         hold: false,
         phases: vec![
-            ph(0.35, Ease::OutBack, vec![Set::Hand(R, hand, n(0.0, -1.0, 0.0), 1.0), Set::Grip(R, 0.8), Set::LookLocal(target)]),
+            ph(0.35, Ease::OutBack, vec![Set::Hand(R, hand, n(0.3, -1.0, 0.0), 1.0), Set::Grip(R, 0.3), Set::Point(R, 1.0), Set::LookLocal(target)]),
             ph(1.0, Ease::Linear, vec![]),
-            ph(0.5, Ease::InOut, vec![Set::HandW(R, 0.0), Set::LookOff]),
+            ph(0.5, Ease::InOut, vec![Set::HandW(R, 0.0), Set::Point(R, 0.0), Set::LookOff]),
         ],
     }
 }
@@ -302,7 +303,7 @@ pub fn scratch_head(k: f32) -> Action {
         name: "scratch",
         hold: false,
         phases: vec![
-            ph(0.45, Ease::InOut, vec![Set::Hand(R, v(k, -0.06, 1.66, -0.01), n(0.0, -0.5, -1.0), 1.0), Set::HeadRoll(-0.1), Set::Expr(Expr::Thinking)]),
+            ph(0.45, Ease::InOut, vec![Set::Hand(R, v(k, -0.105, 1.6, -0.03), n(0.5, -0.5, -0.4), 1.0), Set::Grip(R, 0.45), Set::HeadRoll(-0.1), Set::Expr(Expr::Thinking)]),
             ph(0.8, Ease::Linear, vec![Set::Wiggle(R, Vec3::X * k, 0.015, 3.0)]),
             ph(0.5, Ease::InOut, vec![Set::HandW(R, 0.0), Set::HeadRoll(0.0)]),
         ],
@@ -394,7 +395,7 @@ pub fn yawn(k: f32) -> Action {
         hold: false,
         phases: vec![
             ph(0.4, Ease::InOut, vec![Set::Expr(Expr::Tired), Set::HeadPitch(-0.15)]),
-            ph(0.5, Ease::Out, vec![Set::Hand(R, v(k, -0.02, 1.47, 0.14), n(0.0, 0.0, -1.0), 1.0), Set::Expr(Expr::Surprised), Set::HeadPitch(-0.25)]),
+            ph(0.5, Ease::Out, vec![Set::Hand(R, v(k, -0.03, 1.4, 0.165), n(0.0, 0.0, -1.0), 1.0), Set::Grip(R, 0.15), Set::Expr(Expr::Surprised), Set::HeadPitch(-0.25)]),
             ph(0.8, Ease::Linear, vec![]),
             ph(0.6, Ease::InOut, vec![Set::HandW(R, 0.0), Set::HeadPitch(0.0), Set::Expr(Expr::Tired)]),
         ],

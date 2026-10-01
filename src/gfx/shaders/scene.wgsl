@@ -261,8 +261,9 @@ fn apply_pattern(s: ptr<function, Surface>, kind: u32, lp: vec3<f32>, wp: vec3<f
             let strands = vnoise(q) * 0.55 + vnoise(q * 2.7 + vec3<f32>(3.0)) * 0.45;
             let clump = vnoise(lp * vec3<f32>(40.0, 8.0, 40.0));
             (*s).albedo = (*s).albedo * (0.7 + 0.45 * strands) * (0.85 + 0.3 * clump);
-            (*s).rough = 0.55;
-            (*s).hair = 1.0;
+            // material roughness selects the look: sleek (0.5) .. matte curls / brows (0.9)
+            (*s).hair = clamp(1.0 - ((*s).rough - 0.5) * 2.2, 0.12, 1.0);
+            (*s).rough = max((*s).rough, 0.55);
         }
         case 5u: { // wood (grain along dominant axis)
             let uv = box_axis_uv(wp, n);
@@ -315,21 +316,48 @@ fn apply_pattern(s: ptr<function, Surface>, kind: u32, lp: vec3<f32>, wp: vec3<f
             let d = normalize(lp);
             let r = length(d.xy);
             let ang = atan2(d.y, d.x);
-            let iris_r = 0.52;
-            let pupil_r = 0.17 + 0.04 * ip.x;
-            if (d.z > 0.0 && r < iris_r) {
-                let fib = vnoise(vec3<f32>(ang * 14.0, r * 26.0, 0.0)) * 0.6 + vnoise(vec3<f32>(ang * 40.0, r * 8.0, 3.0)) * 0.4;
-                var iris = (*s).albedo * (0.75 + 0.9 * fib) * mix(1.5, 0.75, r / iris_r);
-                let limbal = smoothstep(iris_r * 0.78, iris_r, r);
-                iris = iris * (1.0 - 0.7 * limbal);
-                let pupil = smoothstep(pupil_r + 0.02, pupil_r - 0.01, r);
-                (*s).albedo = mix(iris, vec3<f32>(0.01, 0.008, 0.008), pupil);
-            } else {
-                let edge = smoothstep(0.3, -0.5, d.z);
-                (*s).albedo = mix(vec3<f32>(0.82, 0.8, 0.78), vec3<f32>(0.7, 0.52, 0.5), edge * 0.7);
+            let iris_r = 0.47;
+            let pupil_r = 0.155 + 0.04 * ip.x;
+            // sclera: warm off-white, pinker toward the corners, shaded under the upper lid
+            let corner = smoothstep(0.45, 0.95, abs(d.x)) + smoothstep(0.35, -0.4, d.z);
+            var col = mix(vec3<f32>(0.6, 0.585, 0.565), vec3<f32>(0.56, 0.36, 0.33), clamp(corner, 0.0, 1.0) * 0.6);
+            if (d.z > 0.0 && r < iris_r + 0.03) {
+                let rn = r / iris_r;
+                let fib = vnoise(vec3<f32>(ang * 15.0, r * 28.0, 0.0)) * 0.55 + vnoise(vec3<f32>(ang * 42.0, r * 9.0, 3.0)) * 0.45;
+                // radial fibres, brighter collarette around the pupil, dark limbal ring
+                // dark eyes keep a warm brown floor instead of reading as black discs
+                var base = (*s).albedo * 1.3 + vec3<f32>(0.075, 0.046, 0.026) * (1.0 - smoothstep(0.02, 0.2, (*s).albedo.r));
+                // slightly desaturated so warm evening light does not turn brown eyes red
+                base = mix(vec3<f32>(luminance(base)), base, 0.72);
+                var iris = base * (0.5 + 0.62 * fib) * mix(1.25, 0.68, smoothstep(0.25, 1.0, rn));
+                // the lower half of the iris catches more light (it is a shallow bowl)
+                iris = iris * (1.0 + 0.35 * smoothstep(0.1, -0.9, d.y / iris_r));
+                let limbal = smoothstep(0.74, 0.98, rn);
+                iris = iris * (1.0 - 0.72 * limbal);
+                let pupil = smoothstep(pupil_r + 0.015, pupil_r - 0.012, r);
+                iris = mix(iris, vec3<f32>(0.004, 0.003, 0.003), pupil);
+                col = mix(iris, col, smoothstep(iris_r - 0.012, iris_r + 0.022, r));
             }
-            (*s).rough = 0.05;
-            (*s).sss = 0.2;
+            // contact shadow cast by the upper lid and lashes
+            col = col * (1.0 - 0.42 * smoothstep(0.12, 0.62, d.y));
+            (*s).albedo = col;
+            // eyes sit in the shadow of the brow: a touch of fill keeps them readable
+            (*s).emissive = col * (luminance(g.sky_up.rgb) * g.sky_up.w * 0.16 + 0.012);
+            (*s).rough = 0.06;
+            (*s).sss = 0.25;
+            // catchlight: a crisp key-light reflection that stays on the upper side of the
+            // cornea whatever the real lights are doing; this is what makes eyes look alive
+            let vdir = normalize(g.cam_pos.xyz - wp);
+            let side_v = normalize(cross(vec3<f32>(0.0, 1.0, 0.0), vdir) + vec3<f32>(1e-4, 0.0, 0.0));
+            let key = normalize(vdir + vec3<f32>(0.0, 0.62, 0.0) + side_v * 0.42);
+            let hk = normalize(vdir + key);
+            let nh = dot(n, hk);
+            let spot = smoothstep(0.9952, 0.9978, nh);
+            let fill = normalize(vdir - vec3<f32>(0.0, 0.5, 0.0) - side_v * 0.3);
+            let spot2 = smoothstep(0.9982, 0.9992, dot(n, normalize(vdir + fill)));
+            let amb = luminance(g.sky_up.rgb) * g.sky_up.w + luminance(g.sun_color.rgb) * 0.12;
+            let glint = clamp(0.25 + amb * 1.6, 0.25, 2.2);
+            (*s).emissive = (*s).emissive + vec3<f32>(1.0, 0.98, 0.95) * (spot + spot2 * 0.35) * glint;
         }
         case 11u: { // computer screen content
             let uv = lp.xy * vec2<f32>(3.4, 5.0);
@@ -567,9 +595,10 @@ fn light_contrib(s: Surface, v: vec3<f32>, l: vec3<f32>, radiance: vec3<f32>) ->
         let sin_th = sqrt(max(1.0 - th * th, 0.0));
         let th2 = dot(tng, normalize(h + n * 0.2));
         let sin2 = sqrt(max(1.0 - th2 * th2, 0.0));
-        hair = (vec3<f32>(0.06) * pow(sin_th, 180.0) + s.albedo * 0.25 * pow(sin2, 40.0)) * nl;
+        hair = (vec3<f32>(0.06) * pow(sin_th, 180.0) + s.albedo * 0.25 * pow(sin2, 40.0)) * nl * s.hair;
     }
-    return (diff + spec * (1.0 - s.hair * 0.7) + vec3<f32>(sheen) * s.albedo + hair) * radiance;
+    // skin scatters most of the light: keep only a soft, broad highlight (no plastic shine)
+    return (diff + spec * (1.0 - s.hair * 0.7) * (1.0 - 0.5 * s.sss) + vec3<f32>(sheen) * s.albedo + hair) * radiance;
 }
 
 fn shade(s: Surface, wp: vec3<f32>, is_char: bool) -> vec3<f32> {
