@@ -249,6 +249,9 @@ pub struct Animator {
     pub idle_variant: u32,
 }
 
+/// Animator event: a foot was planted after a walking step.
+pub const EV_STEP: u32 = 50;
+
 impl Animator {
     pub fn new(skel: Skeleton, pos: Vec3, yaw: f32, seed: u64) -> Animator {
         let rot = Quat::from_rotation_y(yaw);
@@ -487,8 +490,13 @@ impl Animator {
                 if f.t >= 1.0 {
                     f.t = 1.0;
                     f.swing = false;
+                    let stride = (f.to - f.from).length();
                     f.planted = f.to;
                     f.yaw = f.to_yaw;
+                    // a real step (not a small weight shift): footstep sound
+                    if stride > 0.12 && self.sit_amt < 0.3 {
+                        self.events.push(EV_STEP);
+                    }
                 }
             }
         }

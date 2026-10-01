@@ -10,6 +10,8 @@ pub mod items;
 pub mod minigame;
 pub mod save;
 pub mod script;
+pub mod settings_ui;
+pub mod sound;
 pub mod story;
 pub mod time;
 
@@ -515,6 +517,7 @@ pub struct Game {
     world_tap: Option<Vec2>,
     ui_hover: bool,
     bot: Option<bot::Bot>,
+    sound: sound::Sound,
 }
 
 
@@ -619,6 +622,7 @@ impl Game {
             world_tap: None,
             ui_hover: false,
             bot: if cfg.bot { Some(bot::Bot::new(&cfg.bot_policy)) } else { None },
+            sound: sound::Sound::new(cfg.audio, cfg.audio_trace, cfg.save_dir.as_deref()),
         };
         // native debug starts and screenshots build everything up front
         #[cfg(not(target_arch = "wasm32"))]
@@ -777,6 +781,11 @@ impl Game {
         }
     }
 
+    /// Silences / restores sound when the app goes to the background.
+    pub fn set_audio_paused(&mut self, paused: bool) {
+        self.sound.audio.set_paused(paused);
+    }
+
     // ------------------------------------------------------------ update
 
     pub fn update(&mut self, dt: f32, input: &mut Input, w: u32, h: u32) {
@@ -848,6 +857,7 @@ impl Game {
                         s.chars[i].held[1] = None;
                         s.flash = 0.3;
                     }
+                    crate::character::anim::EV_STEP => self.sound.step(s.chars[i].anim.pos),
                     _ => {}
                 }
             }
@@ -969,6 +979,10 @@ impl Game {
                 d.reveal = 1000.0;
             }
         }
+        // sound follows the state: effects, music mood, ambience
+        let clicks = std::mem::take(&mut self.ui.clicks);
+        let cam = self.s.cam.cam;
+        self.sound.update(&self.s, &cam, clicks, dt);
     }
 
     fn feed_input(&mut self, input: &Input) {

@@ -29,6 +29,10 @@ pub struct GameConfig {
     /// Automated play-tester.
     pub bot: bool,
     pub bot_policy: String,
+    /// Sound output (off for headless screenshots and bots, or with `--no-audio`).
+    pub audio: bool,
+    /// Debug: log every sound effect and music change.
+    pub audio_trace: bool,
 }
 
 impl Default for GameConfig {
@@ -50,6 +54,8 @@ impl Default for GameConfig {
             density: None,
             bot: false,
             bot_policy: "first".into(),
+            audio: true,
+            audio_trace: false,
         }
     }
 }
@@ -59,7 +65,7 @@ impl GameConfig {
     /// Some(false) for flags without value and None for unknown arguments.
     pub fn arg(&mut self, key: &str, value: &str) -> Option<bool> {
         let known = [
-            "scene", "perf", "quality", "density", "bot-policy", "hour", "cam", "beat", "ui-scale", "ui_scale", "save-dir", "no-ui", "noui", "fresh", "bot", "icon", "autoplay", "autostart", "start",
+            "scene", "perf", "quality", "density", "bot-policy", "hour", "cam", "beat", "ui-scale", "ui_scale", "save-dir", "no-ui", "noui", "fresh", "bot", "icon", "autoplay", "autostart", "start", "no-audio", "audio-trace",
         ];
         let k = key.trim_start_matches('-');
         if !known.contains(&k) {
@@ -75,6 +81,7 @@ impl GameConfig {
             "density" => self.density = value.parse().ok(),
             "bot-policy" => {
                 self.bot_policy = value.to_string();
+                self.audio = false;
                 self.bot = true;
                 self.autostart = true;
                 self.fresh = true;
@@ -96,11 +103,20 @@ impl GameConfig {
                 self.autostart = true;
                 return false;
             }
+            "no-audio" => {
+                self.audio = false;
+                return false;
+            }
             "perf" => {
                 self.perf = true;
                 return false;
             }
+            "audio-trace" => {
+                self.audio_trace = true;
+                return false;
+            }
             "bot" => {
+                self.audio = false;
                 self.bot = true;
                 self.autostart = true;
                 self.fresh = true;

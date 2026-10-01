@@ -64,6 +64,15 @@ impl Perf {
 
     /// Returns a new render scale when it should change.
     fn update(&mut self, dt: f32, current: f32, loading: bool) -> Option<f32> {
+        // the player can pin the resolution from the pause menu
+        match crate::audio::gfx_mode() {
+            1 => {
+                let target = self.min_scale.max(self.max_scale * 0.6);
+                return if (current - target).abs() > 0.01 { Some(target) } else { None };
+            }
+            2 => return if (current - self.max_scale).abs() > 0.01 { Some(self.max_scale) } else { None },
+            _ => {}
+        }
         if !self.enabled {
             return None;
         }
@@ -306,6 +315,7 @@ impl App {
 impl ApplicationHandler<UserEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if let Some(st) = self.state.as_mut() {
+            st.game.set_audio_paused(false);
             // Android: recreate the surface after resume
             if st.surface.is_none() {
                 if let Some(window) = &self.window {
@@ -387,6 +397,7 @@ impl ApplicationHandler<UserEvent> for App {
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
         if let Some(st) = self.state.as_mut() {
             st.game.save();
+            st.game.set_audio_paused(true);
             if cfg!(target_os = "android") {
                 st.surface = None;
             }

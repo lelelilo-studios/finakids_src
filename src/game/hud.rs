@@ -676,15 +676,36 @@ fn close_button(ui: &mut Ui, r: Rect, id: &str) -> bool {
 }
 
 fn pause(ui: &mut Ui, acts: &mut Vec<UiAct>) {
-    let r = centered(ui, 420.0, 300.0);
+    let hd = head(ui);
+    if ui.compact() {
+        // phones: actions on the left, sound and graphics on the right
+        let r = centered(ui, 800.0, hd + 228.0);
+        modal_panel(ui, r, "Pausa", None);
+        let cw = (r.w - 64.0 - 28.0) * 0.5;
+        let (lx, rx) = (r.x + 32.0, r.x + 32.0 + cw + 28.0);
+        let y = r.y + hd;
+        if ui.button("resume", Rect::new(lx, y, cw, 54.0), "Continuar", ButtonStyle::primary()) {
+            acts.push(UiAct::Resume);
+        }
+        if ui.button("quit", Rect::new(lx, y + 64.0, cw, 54.0), "Guardar y volver al menú", ButtonStyle::ghost()) {
+            acts.push(UiAct::Quit);
+        }
+        super::settings_ui::gfx_panel(ui, Rect::new(lx, y + 136.0, cw, 64.0));
+        super::settings_ui::audio_panel(ui, Rect::new(rx, y, cw, 130.0));
+        ui.paragraph(rx, y + 142.0, cw, "El juego se guarda al terminar cada semana.", 12.0, FONT_REGULAR, pal::TEXT_MUTED, 1.4, None);
+        return;
+    }
+    let r = centered(ui, 420.0, 516.0);
     modal_panel(ui, r, "Pausa", None);
+    super::settings_ui::audio_panel(ui, Rect::new(r.x + 40.0, r.y + 244.0, r.w - 80.0, 130.0));
+    super::settings_ui::gfx_panel(ui, Rect::new(r.x + 40.0, r.y + 386.0, r.w - 80.0, 64.0));
     if ui.button("resume", Rect::new(r.x + 40.0, r.y + 100.0, r.w - 80.0, 56.0), "Continuar", ButtonStyle::primary()) {
         acts.push(UiAct::Resume);
     }
     if ui.button("quit", Rect::new(r.x + 40.0, r.y + 170.0, r.w - 80.0, 56.0), "Guardar y volver al menú", ButtonStyle::ghost()) {
         acts.push(UiAct::Quit);
     }
-    ui.text_in(Rect::new(r.x, r.bottom() - 44.0, r.w, 20.0), "El juego se guarda al terminar cada semana.", 12.0, FONT_REGULAR, pal::TEXT_MUTED, Align::Center);
+    ui.text_in(Rect::new(r.x, r.bottom() - 40.0, r.w, 20.0), "El juego se guarda al terminar cada semana.", 12.0, FONT_REGULAR, pal::TEXT_MUTED, Align::Center);
 }
 
 fn info(ui: &mut Ui, t: &str, b: &str, acts: &mut Vec<UiAct>) {

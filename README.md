@@ -44,6 +44,17 @@ finakids --shot fin.png --frames 100000 --bot-policy first|last|wise|random:SEMI
 
 En la web, las mismas opciones funcionan como parámetros de URL (`?hour=19&scene=plaza`).
 
+### Sonido
+
+Todo el audio es procedural (`src/audio/`): música generativa por momento del día y lugar, ambiente (pájaros, grillos, plaza, fuente) y efectos sintetizados. No hay archivos de sonido. En nativo sale por cpal (en Linux hace falta `libasound2-dev` para compilar); en la web, por WebAudio (empieza con el primer toque o clic). El volumen se ajusta en la pausa.
+
+```bash
+finakids --no-audio                 # sin sonido (los modos --shot y --bot ya lo desactivan)
+finakids --audio-dump DIR           # escribe cada música, ambiente y efecto en WAV e imprime niveles y costo
+finakids --audio-test 10            # reproduce una escena de prueba 10 s e informa cortes (underruns)
+finakids --shot x.png --bot-policy wise --audio-trace   # registra cada efecto y cambio de música
+```
+
 ## Publicación
 
 Las GitHub Actions de los repos privados de la cuenta no arrancan (límite de facturación), así que la compilación vive en el repo público:
