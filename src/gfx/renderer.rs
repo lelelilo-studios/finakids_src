@@ -355,6 +355,8 @@ pub struct Renderer {
     atlas_view: wgpu::TextureView,
     pub atlas_size: u32,
     pub render_scale: f32,
+    /// Phones: fewer shadow taps and point lights per pixel.
+    low: bool,
     pub stats: FrameStats,
     pub last_view_proj: Mat4,
 }
@@ -934,6 +936,7 @@ impl Renderer {
             atlas_view,
             atlas_size,
             render_scale: gpu.info.render_scale,
+            low: gpu.info.is_mobile,
             stats: FrameStats::default(),
             last_view_proj: Mat4::IDENTITY,
         }
@@ -1229,8 +1232,8 @@ impl Renderer {
             let db = b.pos.distance_squared(p.cam_pos) / (b.radius * b.radius);
             da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
         });
-        let nl = ls.len().min(MAX_LIGHTS);
-        for (i, l) in ls.iter().take(MAX_LIGHTS).enumerate() {
+        let nl = ls.len().min(if self.low { 4 } else { MAX_LIGHTS });
+        for (i, l) in ls.iter().take(nl).enumerate() {
             lights[i] = PointLightRaw {
                 pos: [l.pos.x, l.pos.y, l.pos.z, l.radius],
                 color: [l.color.x, l.color.y, l.color.z, 0.0],
@@ -1248,7 +1251,7 @@ impl Renderer {
             fog: [p.fog_color.x, p.fog_color.y, p.fog_color.z, p.fog_density],
             sky_zenith: [p.zenith.x, p.zenith.y, p.zenith.z, p.clouds],
             sky_horizon: [p.horizon.x, p.horizon.y, p.horizon.z, p.stars],
-            params: [nl as f32, 1.0 / self.shadow_size as f32, p.rim_strength, 0.0],
+            params: [nl as f32, 1.0 / self.shadow_size as f32, p.rim_strength, if self.low { 4.0 } else { 8.0 }],
             rim: [p.rim_color.x, p.rim_color.y, p.rim_color.z, 1.0],
             lights,
         };

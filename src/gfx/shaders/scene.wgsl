@@ -504,10 +504,15 @@ fn shadow_factor(wp: vec3<f32>, n: vec3<f32>) -> f32 {
     var offs = array<vec2<f32>, 8>(
         vec2<f32>(-0.94, -0.4), vec2<f32>(0.94, 0.46), vec2<f32>(-0.09, -0.93), vec2<f32>(0.34, 0.29),
         vec2<f32>(-0.5, 0.7), vec2<f32>(0.62, -0.72), vec2<f32>(-0.26, 0.05), vec2<f32>(0.1, 0.95));
+    // phones take 4 taps (g.params.w); each tap is already a 2x2 hardware PCF
+    let taps = i32(g.params.w);
     for (var i = 0; i < 8; i = i + 1) {
+        if (i >= taps) {
+            break;
+        }
         sum = sum + textureSampleCompareLevel(shadow_tex, shadow_smp, uv + offs[i] * texel * 1.6, z);
     }
-    let s = sum / 8.0;
+    let s = sum / f32(taps);
     return mix(1.0, s, g.sun_dir.w);
 }
 

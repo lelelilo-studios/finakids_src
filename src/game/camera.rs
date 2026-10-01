@@ -75,6 +75,8 @@ pub struct CamCtl {
     limits: Option<(f32, f32, f32, f32)>,
     /// Outdoor areas: the camera stays inside this (min x, min z, max x, max z) box.
     area: Option<(f32, f32, f32, f32)>,
+    /// Screen aspect ratio, used to keep interiors framed on very wide screens.
+    pub aspect: f32,
 }
 
 impl CamCtl {
@@ -97,6 +99,7 @@ impl CamCtl {
             zoom_bias: 0.0,
             limits: None,
             area: None,
+            aspect: 16.0 / 9.0,
         }
     }
 
@@ -148,10 +151,18 @@ impl CamCtl {
     fn follow_cam(&self, rig: &CamRig) -> Camera {
         let dir = glam::Vec3::new(self.yaw.sin() * self.pitch.cos(), self.pitch.sin(), self.yaw.cos() * self.pitch.cos());
         let pos = self.focus + dir * self.dist;
+        // interiors are cut-away rooms: on screens wider than 16:9 keep the horizontal
+        // framing instead of revealing the empty space beside the room
+        let wide = self.aspect / (16.0 / 9.0);
+        let fov = if self.limits.is_some() && wide > 1.0 {
+            (2.0 * ((rig.fov.to_radians() * 0.5).tan() / wide).atan()).to_degrees()
+        } else {
+            rig.fov
+        };
         Camera {
             pos,
             target: self.focus,
-            fov: rig.fov,
+            fov,
             ..Camera::default()
         }
     }

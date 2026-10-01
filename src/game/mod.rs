@@ -854,6 +854,7 @@ impl Game {
         }
         let rig = s.locs[s.cur].cam;
         let focus = s.chars[0].anim.pos + Vec3::Y * rig.look_height;
+        s.cam.aspect = w as f32 / h.max(1) as f32;
         s.cam.update(dt, focus, &rig);
         if let Some(c) = s.cfg.cam.clone() {
             debug_cam(s, &c);

@@ -41,6 +41,9 @@ struct Perf {
     timer: f32,
     max_scale: f32,
     min_scale: f32,
+    /// Highest scale known to hold the frame rate (lowered when a step up fails).
+    ceil: f32,
+    since_up: f32,
 }
 
 impl Perf {
@@ -54,6 +57,8 @@ impl Perf {
             timer: 0.0,
             max_scale: gpu.info.render_scale,
             min_scale: if gpu.info.is_mobile { 0.5 } else { 0.6 },
+            ceil: gpu.info.render_scale,
+            since_up: 100.0,
         }
     }
 
@@ -65,18 +70,31 @@ impl Perf {
         let ms = dt * 1000.0;
         // ignore hitches (tab switches, loading) so they don't drag quality down
         if loading || ms > 250.0 {
-            self.timer = 0.0;
+            // start measuring afresh a moment after loading ends
+            self.timer = -2.0;
+            self.ms = 16.7;
+            return None;
+        }
+        if self.timer < 0.0 {
+            self.timer += dt;
             return None;
         }
         self.ms += (ms - self.ms) * 0.08;
         self.timer += dt;
+        self.since_up += dt;
         if self.ms > 24.0 && self.timer > 2.5 && current > self.min_scale + 0.01 {
             self.timer = 0.0;
+            if self.since_up < 10.0 {
+                // the last step up did not hold: stay below it from now on
+                self.ceil = (current - 0.05).max(self.min_scale);
+            }
             return Some((current - 0.1).max(self.min_scale));
         }
-        if self.ms < 15.0 && self.timer > 5.0 && current < self.max_scale - 0.01 {
+        // holding the display rate comfortably: try a little more resolution
+        if self.ms < 18.5 && self.timer > 12.0 && current < self.ceil.min(self.max_scale) - 0.01 {
             self.timer = 0.0;
-            return Some((current + 0.05).min(self.max_scale));
+            self.since_up = 0.0;
+            return Some((current + 0.05).min(self.ceil.min(self.max_scale)));
         }
         None
     }
@@ -219,7 +237,7 @@ impl App {
         st.game.update(dt, &mut self.input, w, h);
         let t_update = t_update.elapsed().as_secs_f32();
         self.input.begin_frame();
-        if let Some(scale) = st.perf.update(dt, st.renderer.render_scale, !st.game.ready()) {
+        if let Some(scale) = st.perf.update(dt, st.renderer.render_scale, st.game.is_loading()) {
             log::info!("render scale {:.2} ({:.1} ms/frame)", scale, st.perf.ms);
             st.renderer.set_render_scale(scale);
         }
