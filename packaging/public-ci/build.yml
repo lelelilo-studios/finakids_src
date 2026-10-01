@@ -43,6 +43,7 @@ jobs:
         with: { repository: '${{ env.SRC_REPO }}', ref: '${{ inputs.ref }}', ssh-key: '${{ secrets.SRC_DEPLOY_KEY }}' }
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - run: cargo build --release --bin finakids
       - run: |
           mkdir -p pkg/Finakids && cp target/release/finakids pkg/Finakids/ && cp packaging/icons/icon_256.png pkg/Finakids/finakids.png

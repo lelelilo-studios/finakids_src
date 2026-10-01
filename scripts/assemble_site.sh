@@ -15,7 +15,13 @@ if [ "$DL" != "-" ] && [ -d "$DL" ]; then
 fi
 VERSION=$(grep -m1 '^version' "$(dirname "$0")/../Cargo.toml" | cut -d'"' -f2)
 BASE="https://lelelilo-studios.github.io/Finakids"
-link() { if [ -f "$OUT/downloads/$1" ]; then echo "[$2]($BASE/downloads/$1)"; else echo "_(próximamente)_"; fi; }
+# STALE: descargas que no se pudieron recompilar en esta publicación (se conservan de la anterior)
+STALE=" ${STALE:-} "
+link() {
+  if [ -f "$OUT/downloads/$1" ]; then
+    case "$STALE" in *" $1 "*) echo "[$2]($BASE/downloads/$1) _(versión anterior)_" ;; *) echo "[$2]($BASE/downloads/$1)" ;; esac
+  else echo "_(próximamente)_"; fi
+}
 cat > "$OUT/README.md" <<MD
 # Finakids
 
@@ -26,7 +32,7 @@ Vive ocho semanas en la vida de Sofía: recibe dinero, ahorra, compra, usa créd
 
 **$BASE/**
 
-Funciona en Chrome, Edge, Safari y Firefox recientes (WebGPU, con respaldo WebGL2). En teléfonos, gíralo en horizontal.
+Funciona en Chrome, Edge, Safari y Firefox recientes (WebGPU, con respaldo WebGL2), también en celulares y tablets: gira el teléfono en horizontal. Con sonido (música y efectos; se ajustan en el menú de pausa).
 
 ## Descargas (versión $VERSION)
 
@@ -40,11 +46,14 @@ Funciona en Chrome, Edge, Safari y Firefox recientes (WebGPU, con respaldo WebGL
 
 ## Controles
 
-- **Mover:** WASD / flechas, o toca/haz clic en el suelo
-- **Interactuar / hablar:** E, o toca el objeto o personaje
-- **Teléfono (banco, metas, crédito, inversiones...):** TAB o el botón inferior derecho
-- **Cámara:** arrastra, Q / R, rueda o pellizco para zoom
-- **Pantalla completa:** F
+| | Teclado y ratón | Pantalla táctil |
+|---|---|---|
+| **Mover** | WASD / flechas, o clic en el suelo | Toca el suelo |
+| **Interactuar / hablar** | E, o clic en el objeto o personaje | Toca el objeto o personaje |
+| **Teléfono** (banco, metas, crédito, inversiones...) | TAB o el botón inferior derecho | Botón inferior derecho |
+| **Cámara** | Arrastrar, Q / R, rueda | Arrastra; pellizca para acercar |
+| **Pausa** (volumen, calidad gráfica) | Esc o el botón ⏸ | Botón ⏸ |
+| **Pantalla completa** | F | Automática al primer toque (Android) |
 
 ---
 Hecho con Rust + wgpu. Todo el mundo 3D, los personajes y sus animaciones se generan proceduralmente en tiempo real.
