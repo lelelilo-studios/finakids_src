@@ -51,6 +51,11 @@ Las GitHub Actions de los repos privados de la cuenta no arrancan (límite de fa
 - `lelelilo-studios/Finakids` tiene `.github/workflows/build.yml` (copia canónica en `packaging/public-ci/build.yml`). Clona este código con una clave de despliegue de solo lectura (`SRC_DEPLOY_KEY`), compila Web, Windows, macOS (universal), Linux, Android (APK arm64) e iOS (IPA sin firmar + simulador) y publica solo los binarios en GitHub Pages.
 - Para publicar una versión nueva: `gh workflow run build.yml -R lelelilo-studios/Finakids -f ref=main`.
 - Despliegue local (web + Linux, conservando las demás descargas del sitio): `./scripts/build_web.sh`, empaquetar el tarball Linux en `dist/downloads` junto a las descargas actuales, `./scripts/assemble_site.sh dist/web dist/downloads dist/site` y `GIT_SSH_COMMAND="ssh -i <clave>" ./scripts/deploy_site.sh dist/site`.
+- Windows y Android también se compilan en local desde Linux, sin sudo (dejan el archivo en `dist/downloads`):
+  - `./scripts/build_windows.sh` → `Finakids-windows-x64.zip` (Rust `x86_64-pc-windows-gnu` + Zig como enlazador vía `cargo-zigbuild`; el icono lo incrusta `build.rs`).
+  - `CARGO_APK_RELEASE_KEYSTORE_PASSWORD='…' ./scripts/build_android.sh` → `Finakids-android-arm64.apk` (`cargo-apk`; keystore por defecto en `~/.local/share/finakids/finakids-release.p12`, o `CARGO_APK_RELEASE_KEYSTORE`). Sin la contraseña el script se detiene: el APK debe firmarse con la misma clave publicada para que se actualice encima.
+  - Herramientas esperadas en `~/.local/opt` (las localiza `scripts/toolchains.env`): Zig (`zig-*`), Temurin JDK 17 (`jdk-17*`) y el SDK de Android (`android-sdk` con `platforms;android-34`, `build-tools;34.0.0` y un NDK r27), más `cargo install cargo-zigbuild cargo-apk` y `rustup target add x86_64-pc-windows-gnu aarch64-linux-android`.
+  - macOS e iOS siguen necesitando una Mac (`scripts/package_macos.sh`, `scripts/package_ios.sh`).
 - El APK se firma con un keystore estable guardado en los secretos `ANDROID_KEYSTORE_B64` / `ANDROID_KEYSTORE_PASSWORD`.
 - `ci.yml` y `release.yml` de este repo quedan solo con ejecución manual, por si se reactivan las Actions privadas.
 
