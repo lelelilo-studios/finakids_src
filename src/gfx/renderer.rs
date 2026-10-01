@@ -92,6 +92,7 @@ struct GlobalsRaw {
     sky_horizon: [f32; 4],
     params: [f32; 4],
     rim: [f32; 4],
+    room: [f32; 4],
     lights: [PointLightRaw; MAX_LIGHTS],
 }
 
@@ -172,6 +173,8 @@ pub struct SceneParams {
     pub shadow_radius: f32,
     pub draw_sky: bool,
     pub clear_color: Vec3,
+    /// Cut-away interior bounds (min x, min z, max x, max z); the surroundings are dimmed.
+    pub room: Option<[f32; 4]>,
 }
 
 impl Default for SceneParams {
@@ -202,6 +205,7 @@ impl Default for SceneParams {
             shadow_radius: 6.0,
             draw_sky: true,
             clear_color: Vec3::ZERO,
+            room: None,
         }
     }
 }
@@ -1252,7 +1256,8 @@ impl Renderer {
             sky_zenith: [p.zenith.x, p.zenith.y, p.zenith.z, p.clouds],
             sky_horizon: [p.horizon.x, p.horizon.y, p.horizon.z, p.stars],
             params: [nl as f32, 1.0 / self.shadow_size as f32, p.rim_strength, if self.low { 4.0 } else { 8.0 }],
-            rim: [p.rim_color.x, p.rim_color.y, p.rim_color.z, 1.0],
+            rim: [p.rim_color.x, p.rim_color.y, p.rim_color.z, if p.room.is_some() { 0.22 } else { 1.0 }],
+            room: p.room.unwrap_or([0.0; 4]),
             lights,
         };
         queue.write_buffer(&self.globals_buf, 0, bytemuck::bytes_of(&g));

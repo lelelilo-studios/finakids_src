@@ -1570,6 +1570,12 @@ impl Game {
                 p.shadow_center = if interior { s.locs[li].shadow_center } else { s.chars[0].anim.pos + Vec3::Y };
                 p.shadow_radius = if interior { s.locs[li].shadow_radius } else { 14.0 };
                 p.draw_sky = true;
+                p.room = if interior {
+                    let (lo, hi) = s.locs[li].bounds;
+                    Some([lo.x - 0.2, lo.y - 0.2, hi.x + 0.2, hi.y + 0.2])
+                } else {
+                    None
+                };
             }
             let post = &mut scene.post;
             post.exposure = sky.exposure * if interior { 1.12 } else { 1.0 };

@@ -18,7 +18,8 @@ struct Globals {
     sky_zenith: vec4<f32>,  // w: cloud cover
     sky_horizon: vec4<f32>, // w: stars
     params: vec4<f32>,      // x: light count, y: shadow texel, z: rim strength, w: night factor
-    rim: vec4<f32>,         // rim color, w: saturation of patterns
+    rim: vec4<f32>,         // rim color, w: brightness of the surroundings of a cut-away room
+    room: vec4<f32>,        // interior bounds: min x, min z, max x, max z
     lights: array<PointLight, 8>,
 };
 
@@ -615,7 +616,23 @@ fn shade(s: Surface, wp: vec3<f32>, is_char: bool) -> vec3<f32> {
     return col;
 }
 
-fn apply_fog(c: vec3<f32>, wp: vec3<f32>) -> vec3<f32> {
+// Interiors are cut-away rooms: whatever lies beside or in front of the room is
+// dimmed like the dark part of a stage. What is behind the back wall (the view
+// through the windows) keeps its daylight.
+fn stage_dim(c: vec3<f32>, wp: vec3<f32>) -> vec3<f32> {
+    if (g.rim.w >= 1.0) {
+        return c;
+    }
+    let side = max(max(g.room.x - wp.x, wp.x - g.room.z), 0.0);
+    let front = max(wp.z - g.room.w, 0.0);
+    let behind = smoothstep(0.0, 2.5, g.room.y - wp.z);
+    let k = smoothstep(0.15, 3.0, max(side, front)) * (1.0 - behind);
+    let grey = vec3<f32>(dot(c, vec3<f32>(0.3, 0.55, 0.15)));
+    return mix(c, mix(grey, c, 0.45) * g.rim.w, k);
+}
+
+fn apply_fog(c0: vec3<f32>, wp: vec3<f32>) -> vec3<f32> {
+    let c = stage_dim(c0, wp);
     if (g.fog.w <= 0.0) {
         return c;
     }
