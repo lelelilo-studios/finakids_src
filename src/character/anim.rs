@@ -767,12 +767,15 @@ impl Animator {
         let mut hips_off = hips;
         // sitting
         let mut sit_drop = 0.0;
+        // seated bodies also shift back onto the seat: gestures and gaze follow
+        let mut sit_shift = Vec3::ZERO;
         if let Stance::Sit { seat, .. } = self.stance {
             let seat_local = inv_root * (seat - self.pos);
             let seated = Vec3::new(seat_local.x, seat_local.y + 0.14 * k - hip_bind.y, seat_local.z - 0.02);
             let s = ease_in_out(self.sit_amt);
             hips_off = hips_off.lerp(seated, s);
             sit_drop = seated.y * s;
+            sit_shift = Vec3::new(seated.x, 0.0, seated.z) * s;
         } else if self.sit_amt > 0.0 {
             sit_drop = hips_off.y.min(0.0) * self.sit_amt;
         }
@@ -815,7 +818,7 @@ impl Animator {
         let mut want_pitch = self.ch.head_pitch;
         let mut have_look = false;
         let look_target_local = if self.ch.look_w > 0.01 {
-            self.ch.look_local.map(|p| p + Vec3::Y * sit_drop)
+            self.ch.look_local.map(|p| p + Vec3::Y * sit_drop + sit_shift)
         } else {
             None
         };
@@ -906,6 +909,7 @@ impl Animator {
             let mut hc = self.ch.hand[side];
             // gesture targets are authored standing: follow the body when seated
             hc.pos.y += sit_drop;
+            hc.pos += sit_shift;
             let target = rest.lerp(hc.pos, hc.w);
             // hanging arms rotate slightly inward: palms face the thighs and a little back
             let palm_rest = Vec3::new(-s, -0.15, -0.5).normalize();

@@ -119,8 +119,20 @@ fn title_screen(ui: &mut Ui, s: &State, acts: &mut Vec<UiAct>) {
     let h = ui.height;
     let compact = ui.compact();
     // left gradient for readability
-    ui.rect_grad(Rect::new(0.0, 0.0, w * 0.55, h), rgba(0x0b0c10, 200), rgba(0x0b0c10, 120), 0.0);
-    ui.rect(Rect::new(w * 0.55, 0.0, w * 0.2, h), rgba(0x0b0c10, 40), 0.0);
+    // horizontal fade built from stacked rects: each edge is only a tiny step in darkness
+    let strips = 48;
+    let span = w * 0.78;
+    let trans = |i: usize| -> f32 {
+        let t = i as f32 / strips as f32;
+        let k = ((t - 0.3) / 0.7).clamp(0.0, 1.0);
+        1.0 - 0.78 * (1.0 - k * k * (3.0 - 2.0 * k))
+    };
+    for i in 0..strips {
+        let a = 1.0 - trans(i) / trans(i + 1);
+        if a > 0.001 {
+            ui.rect(Rect::new(0.0, 0.0, (i + 1) as f32 / strips as f32 * span, h), with_alpha(rgba(0x0b0c10, 255), a), 0.0);
+        }
+    }
     let appear = ui.anim_from(hash_id("title_in"), 0.0, 1.0, 1.6);
     let x = if compact { 44.0 } else { 72.0 };
     let ts = if compact { 60.0 } else { 84.0 };

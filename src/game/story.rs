@@ -35,6 +35,8 @@ pub fn setup_title(s: &mut State) {
     s.chars[0].held[1] = Some(HeldProp::Phone);
     let k = s.chars[0].k();
     let (view, palm) = crate::character::actions::phone_view_pos(k);
+    // phone a little lower and closer than the standing viewing pose
+    let tune = Vec3::new(0.03, -0.04, -0.04);
     s.chars[0].anim.play(crate::character::anim::Action {
         name: "title_phone",
         hold: true,
@@ -42,16 +44,17 @@ pub fn setup_title(s: &mut State) {
             0.6,
             crate::math::Ease::InOut,
             vec![
-                crate::character::anim::Set::Hand(1, view - Vec3::new(0.0, 0.12, 0.05) * k, palm, 1.0),
+                crate::character::anim::Set::Hand(1, view + tune * k, palm, 1.0),
                 crate::character::anim::Set::Grip(1, 0.6),
-                crate::character::anim::Set::LookLocal(view - Vec3::new(0.0, 0.1, 0.05) * k),
+                crate::character::anim::Set::LookLocal(view + tune * k),
                 crate::character::anim::Set::Expr(Expr::Happy),
             ],
         )],
     });
     let li = s.cur;
     s.locs[li].set_prop_visible("phone_table", false);
-    let shot = super::camera::Shot::dolly(Vec3::new(-0.6, 1.25, 1.2), Vec3::new(0.2, 1.1, 0.9), Vec3::new(1.0, 0.95, -1.1), 36.0, 30.0);
+    // Sofía sits right of centre, leaving the left of the frame to the title
+    let shot = super::camera::Shot::dolly(Vec3::new(-0.75, 1.25, 1.15), Vec3::new(0.0, 1.1, 0.85), Vec3::new(0.52, 0.93, -1.1), 36.0, 30.0);
     s.cam.play(shot);
 }
 
