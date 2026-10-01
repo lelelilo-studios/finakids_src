@@ -3,6 +3,7 @@
 #![allow(deprecated)]
 
 pub mod app;
+pub mod audio;
 pub mod character;
 pub mod game;
 pub mod gfx;

@@ -24,6 +24,17 @@ fn main() {
                 frames = next.parse().unwrap_or(frames);
                 i += 1;
             }
+            // debug: render all music, ambience and effects to WAV files and print level stats
+            "--audio-dump" => {
+                finakids::audio::dump(&next);
+                return;
+            }
+            // debug: play a scripted scene on the output device and report underruns
+            "--audio-test" => {
+                finakids::platform::init_logger();
+                finakids::audio::device_test(next.parse().unwrap_or(5.0));
+                return;
+            }
             other => match cfg.arg(other, &next) {
                 Some(true) => i += 1,
                 Some(false) => {}
@@ -35,6 +46,7 @@ fn main() {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     if let Some(path) = shot {
         finakids::platform::init_logger();
+        cfg.audio = false;
         finakids::app::screenshot(cfg, &path, w, h, frames);
         return;
     }

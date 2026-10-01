@@ -573,8 +573,9 @@ fn close_button(ui: &mut Ui, r: Rect, id: &str) -> bool {
 }
 
 fn pause(ui: &mut Ui, acts: &mut Vec<UiAct>) {
-    let r = centered(ui, 420.0, 300.0);
+    let r = centered(ui, 420.0, 432.0);
     modal_panel(ui, r, "Pausa", None);
+    super::settings_ui::audio_panel(ui, Rect::new(r.x + 40.0, r.y + 244.0, r.w - 80.0, 130.0));
     if ui.button("resume", Rect::new(r.x + 40.0, r.y + 100.0, r.w - 80.0, 56.0), "Continuar", ButtonStyle::primary()) {
         acts.push(UiAct::Resume);
     }

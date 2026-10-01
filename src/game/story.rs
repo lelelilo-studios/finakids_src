@@ -1836,6 +1836,7 @@ pub fn after_scene(s: &mut State) {
 
 pub fn debug_beat(s: &mut State, b: &str) {
     match b {
+        "pause" => s.modal = Some(Modal::Pause),
         "shop" => {
             s.fin.earn(30_000, "debug");
             s.goto(Loc::Plaza, "fountain");

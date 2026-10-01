@@ -140,6 +140,8 @@ pub struct Ui {
     pub opacity: f32,
     /// Safe-area insets (logical px): left, top, right, bottom.
     pub safe: [f32; 4],
+    /// Elements activated (clicked / tapped) since the game last read it: drives the UI click sound.
+    pub clicks: u32,
 }
 
 pub fn hash_id(s: &str) -> u64 {
@@ -174,6 +176,7 @@ impl Ui {
             cmd_start: 0,
             opacity: 1.0,
             safe: [0.0; 4],
+            clicks: 0,
         }
     }
 
@@ -621,6 +624,7 @@ impl Ui {
             let clicked = self.input.released && self.input.drag_dist < 14.0 && !self.click_consumed;
             if clicked {
                 self.click_consumed = true;
+                self.clicks += 1;
             }
             (true, clicked)
         } else {
